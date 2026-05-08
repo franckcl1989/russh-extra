@@ -1,0 +1,77 @@
+name: Feature proposal
+description: Propose new russh-extra behavior
+title: "feat: "
+labels:
+  - C-feature
+  - S-needs-design
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: SSH workflow
+      description: What should users be able to do?
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Proposed API
+      description: Show the Rust code users should write.
+    validations:
+      required: true
+  - type: textarea
+    id: russh
+    attributes:
+      label: Mapping to russh
+      description: Which official russh APIs or SSH protocol features does this use?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Behavior and errors
+      description: What should happen on success, cancellation, remote disconnect, and error paths?
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Tests
+      description: Which unit, integration, local loopback, or feature-gating tests should cover this?
+    validations:
+      required: true
+  - type: textarea
+    id: dependency_impact
+    attributes:
+      label: Dependency-policy impact
+      description: Does this require a new crate? If so, justify against the dependency policy in docs/dev/constraints.md.
+    validations:
+      required: true
+  - type: textarea
+    id: security_impact
+    attributes:
+      label: Security impact
+      description: Does this affect host keys, credentials, secrets handling, logging, or auth decisions? Describe the impact and safe defaults.
+    validations:
+      required: true
+  - type: textarea
+    id: feature_gate_impact
+    attributes:
+      label: Feature-gate impact
+      description: Which feature flag exposes this? Should it be in default, full, or neither? Justify against docs/dev/decisions/0003-feature-flag-naming.md.
+    validations:
+      required: true
+  - type: textarea
+    id: audit_timing
+    attributes:
+      label: Required independent audit timing
+      description: When should the independent AI audit happen? (after implementation, after first release, before marking design Implemented, etc.)
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Include why this belongs in russh-extra.
+    validations:
+      required: true

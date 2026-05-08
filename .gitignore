@@ -13,6 +13,13 @@ target
 # Contains mutation testing data
 **/mutants.out*/
 
+# Local SSH test artifacts and generated secrets
+**/.ssh/known_hosts
+**/.ssh/authorized_keys
+**/fixtures/**/id_*
+**/fixtures/**/*.pem
+**/fixtures/**/*.key
+
 # RustRover
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
 #  be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore

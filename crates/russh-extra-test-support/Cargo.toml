@@ -1,0 +1,23 @@
+[package]
+name = "russh-extra-test-support"
+description = "Test support utilities for russh-extra."
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+license.workspace = true
+readme.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+rand.workspace = true
+russh = { workspace = true, features = ["aws-lc-rs"] }
+russh-extra.workspace = true
+tokio.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

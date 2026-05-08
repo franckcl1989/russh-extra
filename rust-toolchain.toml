@@ -1,0 +1,4 @@
+[toolchain]
+# Pinned so a new Rust release cannot break local development on its own.
+# Bump this in lockstep with RUST_STABLE_VERSION in CI.
+channel = "1.95.0"

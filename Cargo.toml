@@ -1,0 +1,52 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/russh-extra",
+    "crates/russh-extra-core",
+    "crates/russh-extra-macros",
+    "crates/russh-extra-test-support",
+    "tests",
+]
+
+[workspace.package]
+authors = ["franckcl1989"]
+categories = ["network-programming", "asynchronous"]
+edition = "2024"
+homepage = "https://github.com/franckcl1989/russh-extra"
+keywords = ["ssh", "russh", "tokio", "async"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/franckcl1989/russh-extra"
+rust-version = "1.95"
+version = "0.1.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.dependencies]
+russh-extra = { version = "0.1.0", path = "crates/russh-extra", default-features = false }
+russh-extra-core = { version = "0.1.0", path = "crates/russh-extra-core" }
+russh-extra-macros = { version = "0.1.0", path = "crates/russh-extra-macros" }
+russh-extra-test-support = { version = "0.1.0", path = "crates/russh-extra-test-support" }
+
+async-trait = "0.1.89"
+base64 = "0.22"
+bytes = "1.10"
+futures-core = "0.3"
+futures-util = "0.3"
+pretty_assertions = "1.4"
+rand = "0.10"
+russh = { version = "0.60.2", default-features = false }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.50", features = ["io-util", "macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
+tokio-stream = "0.1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.test]
+debug = "line-tables-only"
