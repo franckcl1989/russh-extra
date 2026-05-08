@@ -641,4 +641,596 @@ mod tests {
         assert_eq!(store.entry_count(), clone.entry_count());
         assert_eq!(store.entry_count(), 0);
     }
+
+    #[test]
+    fn parses_comma_separated_hostname_line() {
+        let encoded = base64_encode(b"comma-sep-key");
+        let line = format!("host-a,host-b,host-c ssh-ed25519 {encoded}");
+        let entry = KnownHostsEntry::parse(&line).unwrap();
+
+        assert_eq!(entry.hostname(), "host-a");
+    }
+
+    #[test]
+    fn parses_ip_address_entry() {
+        let encoded = base64_encode(b"ip-addr-key");
+        let line = format!("192.168.1.1 ssh-ed25519 {encoded}");
+        let entry = KnownHostsEntry::parse(&line).unwrap();
+
+        assert_eq!(entry.hostname(), "192.168.1.1");
+        assert_eq!(entry.port(), 0);
+    }
+
+    #[test]
+    fn parses_ecdsa_algorithm_entry() {
+        let encoded = base64_encode(b"ecdsa-key-data");
+        let line = format!("example.com ecdsa-sha2-nistp256 {encoded}");
+        let entry = KnownHostsEntry::parse(&line).unwrap();
+
+        assert_eq!(entry.algorithm(), "ecdsa-sha2-nistp256");
+    }
+
+    #[test]
+    fn rejects_line_with_missing_key_type() {
+        let line = "example.com";
+        assert!(KnownHostsEntry::parse(line).is_none());
+    }
+
+    #[test]
+    fn rejects_line_with_invalid_base64() {
+        let line = "example.com ssh-ed25519 not-valid-base64!!!";
+        assert!(KnownHostsEntry::parse(line).is_none());
+    }
+
+    #[test]
+    fn rejects_line_with_only_tag_and_key() {
+        let encoded = base64_encode(b"only-two-parts");
+        let line = format!("ssh-ed25519 {encoded}");
+        assert!(KnownHostsEntry::parse(&line).is_none());
+    }
+
+    #[test]
+    fn host_match_exact() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("example.com", 22, &public_key),
+            KnownHostStatus::Match
+        );
+    }
+
+    #[test]
+    fn host_match_case_insensitive() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("EXAMPLE.COM", 22, &public_key),
+            KnownHostStatus::Match
+        );
+    }
+
+    #[test]
+    fn host_match_non_matching() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("other.com", 22, &public_key),
+            KnownHostStatus::NotFound
+        );
+    }
+
+    #[test]
+    fn host_match_port_specific_only_matches_that_port() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 2222, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("example.com", 2222, &public_key),
+            KnownHostStatus::Match
+        );
+        assert_eq!(
+            store.check("example.com", 22, &public_key),
+            KnownHostStatus::NotFound
+        );
+    }
+
+    #[test]
+    fn host_match_port_zero_matches_any_port() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("example.com", 22, &public_key),
+            KnownHostStatus::Match
+        );
+        assert_eq!(
+            store.check("example.com", 2222, &public_key),
+            KnownHostStatus::Match
+        );
+    }
+
+    #[test]
+    fn key_match_different_key_same_algorithm_is_changed() {
+        let private_key1 =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key1 = private_key1.public_key().clone();
+
+        let private_key2 =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key2 = private_key2.public_key().clone();
+
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key1, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("example.com", 22, &public_key2),
+            KnownHostStatus::Changed
+        );
+    }
+
+    #[test]
+    fn key_match_different_algorithm() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key, "ssh-rsa")
+            .unwrap();
+
+        assert_eq!(
+            store.check("example.com", 22, &public_key),
+            KnownHostStatus::Match
+        );
+    }
+
+    #[test]
+    fn revoked_entry_returns_revoked_status() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        let key_blob = public_key.to_bytes().unwrap();
+
+        store.inner.write().unwrap().entries.push(KnownHostsEntry {
+            hostname: "evil.com".into(),
+            port: 0,
+            algorithm: "ssh-ed25519".into(),
+            key_blob,
+            comment: None,
+            revoked: true,
+        });
+
+        assert_eq!(
+            store.check("evil.com", 22, &public_key),
+            KnownHostStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn save_format_plain_hostname_for_port_22() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 22, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        store.save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("example.com "));
+        assert!(!content.contains("[example.com]:22"));
+    }
+
+    #[test]
+    fn save_format_bracketed_hostname_for_non_default_port() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 2222, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        store.save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.contains("[example.com]:2222"));
+    }
+
+    #[test]
+    fn save_format_includes_revoked_marker() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let key_blob = public_key.to_bytes().unwrap();
+        let store = KnownHosts::new();
+        store.inner.write().unwrap().entries.push(KnownHostsEntry {
+            hostname: "revoked-host.com".into(),
+            port: 0,
+            algorithm: "ssh-ed25519".into(),
+            key_blob,
+            comment: None,
+            revoked: true,
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        store.save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("@revoked "));
+    }
+
+    #[test]
+    fn save_and_load_round_trip() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+
+        {
+            let store = KnownHosts::new();
+            store
+                .add_entry("example.com", 2222, &public_key, "ssh-ed25519")
+                .unwrap();
+            store
+                .add_entry("other.com", 0, &public_key, "ssh-rsa")
+                .unwrap();
+            store.save(&path).unwrap();
+        }
+
+        let loaded = KnownHosts::load(&path).unwrap();
+        assert_eq!(loaded.entry_count(), 2);
+
+        assert_eq!(
+            loaded.check("example.com", 2222, &public_key),
+            KnownHostStatus::Match
+        );
+        assert_eq!(
+            loaded.check("other.com", 22, &public_key),
+            KnownHostStatus::Match
+        );
+    }
+
+    #[test]
+    fn save_and_load_preserves_revoked() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let key_blob = public_key.to_bytes().unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+
+        {
+            let store = KnownHosts::new();
+            store.inner.write().unwrap().entries.push(KnownHostsEntry {
+                hostname: "evil.com".into(),
+                port: 0,
+                algorithm: "ssh-ed25519".into(),
+                key_blob,
+                comment: None,
+                revoked: true,
+            });
+            store.save(&path).unwrap();
+        }
+
+        let loaded = KnownHosts::load(&path).unwrap();
+        assert_eq!(loaded.entry_count(), 1);
+        assert_eq!(
+            loaded.check("evil.com", 22, &public_key),
+            KnownHostStatus::Revoked
+        );
+    }
+
+    #[test]
+    fn source_paths_recorded_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        let encoded = base64_encode(b"source-path-key");
+        std::fs::write(&path, format!("example.com ssh-ed25519 {encoded}\n")).unwrap();
+
+        let store = KnownHosts::load(&path).unwrap();
+        let paths = store.source_paths();
+
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], path);
+    }
+
+    #[test]
+    fn warnings_from_file_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        let encoded = base64_encode(b"warning-key");
+        std::fs::write(
+            &path,
+            format!(
+                "\
+                example.com ssh-ed25519 {encoded}\n\
+                |1|xxx|yyy ssh-ed25519 {encoded}\n\
+                @cert-authority ca.com ssh-ed25519 {encoded}\n\
+                bad line\n\
+                "
+            ),
+        )
+        .unwrap();
+
+        let store = KnownHosts::load(&path).unwrap();
+
+        assert_eq!(store.entry_count(), 1);
+
+        let warnings = store.warnings();
+        assert_eq!(warnings.len(), 3);
+        assert!(warnings[0].reason.contains("hashed"));
+        assert!(warnings[1].reason.contains("cert-authority"));
+        assert!(warnings[2].reason.contains("failed to parse"));
+    }
+
+    #[test]
+    fn load_merge_and_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path1 = dir.path().join("kh1");
+        let path2 = dir.path().join("kh2");
+        let encoded1 = base64_encode(b"merge-key-1");
+        let encoded2 = base64_encode(b"merge-key-2");
+
+        std::fs::write(&path1, format!("host-a.com ssh-ed25519 {encoded1}\n")).unwrap();
+        std::fs::write(&path2, format!("host-b.com ssh-ed25519 {encoded2}\n")).unwrap();
+
+        let store1 = KnownHosts::load(&path1).unwrap();
+        let store2 = KnownHosts::load(&path2).unwrap();
+        store1.merge(store2);
+
+        assert_eq!(store1.entry_count(), 2);
+
+        let merged_paths = store1.source_paths();
+        assert_eq!(merged_paths.len(), 2);
+    }
+
+    #[test]
+    fn large_number_of_entries() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+        let count = 200;
+
+        for i in 0..count {
+            let host = format!("host-{i}.example.com");
+            store
+                .add_entry(&host, 0, &public_key, "ssh-ed25519")
+                .unwrap();
+        }
+
+        assert_eq!(store.entry_count(), count);
+
+        for i in 0..count {
+            let host = format!("host-{i}.example.com");
+            assert_eq!(store.check(&host, 22, &public_key), KnownHostStatus::Match);
+        }
+    }
+
+    #[test]
+    fn load_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(&path, "").unwrap();
+
+        let store = KnownHosts::load(&path).unwrap();
+        assert_eq!(store.entry_count(), 0);
+        assert!(store.warnings().is_empty());
+    }
+
+    #[test]
+    fn load_file_with_only_comments_and_blank_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        std::fs::write(
+            &path,
+            "\
+            # comment one\n\
+            \n\
+            # comment two\n\
+            \n\
+            ",
+        )
+        .unwrap();
+
+        let store = KnownHosts::load(&path).unwrap();
+        assert_eq!(store.entry_count(), 0);
+        assert!(store.warnings().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_group_writable_file_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        let encoded = base64_encode(b"perm-key");
+        std::fs::write(&path, format!("example.com ssh-ed25519 {encoded}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664)).unwrap();
+
+        let result = KnownHosts::load(&path);
+        assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_creates_file_with_restrictive_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 22, &public_key, "ssh-ed25519")
+            .unwrap();
+        store.save(&path).unwrap();
+
+        let metadata = std::fs::metadata(&path).unwrap();
+        let mode = metadata.permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn tilde_expansion_to_home() {
+        let home = std::env::var("HOME").unwrap();
+        let result = expand_tilde(std::path::Path::new("~/.ssh/known_hosts"));
+
+        assert_eq!(
+            result,
+            std::path::PathBuf::from(&home).join(".ssh/known_hosts")
+        );
+    }
+
+    #[test]
+    fn tilde_alone_expands_to_home() {
+        let home = std::env::var("HOME").unwrap();
+        let result = expand_tilde(std::path::Path::new("~"));
+
+        assert_eq!(result, std::path::PathBuf::from(&home));
+    }
+
+    #[test]
+    fn tilde_not_expanded_without_slash() {
+        let result = expand_tilde(std::path::Path::new("~user"));
+
+        assert_eq!(result, std::path::PathBuf::from("~user"));
+    }
+
+    #[test]
+    fn tilde_not_expanded_in_middle_of_path() {
+        let result = expand_tilde(std::path::Path::new("/home/~user/ssh"));
+
+        assert_eq!(result, std::path::PathBuf::from("/home/~user/ssh"));
+    }
+
+    #[test]
+    fn known_hosts_entry_accessors() {
+        let entry = KnownHostsEntry {
+            hostname: "accessor-test.com".into(),
+            port: 2222,
+            algorithm: "ssh-rsa".into(),
+            key_blob: b"accessor-key-data".to_vec(),
+            comment: Some("a comment".into()),
+            revoked: true,
+        };
+
+        assert_eq!(entry.hostname(), "accessor-test.com");
+        assert_eq!(entry.port(), 2222);
+        assert_eq!(entry.algorithm(), "ssh-rsa");
+        assert_eq!(entry.key_blob(), b"accessor-key-data");
+        assert_eq!(entry.comment(), Some("a comment"));
+        assert!(entry.is_revoked());
+    }
+
+    #[test]
+    fn known_hosts_entry_accessor_no_comment() {
+        let entry = KnownHostsEntry {
+            hostname: "no-comment.com".into(),
+            port: 0,
+            algorithm: "ssh-ed25519".into(),
+            key_blob: b"no-comment-key".to_vec(),
+            comment: None,
+            revoked: false,
+        };
+
+        assert_eq!(entry.comment(), None);
+        assert!(!entry.is_revoked());
+    }
+
+    #[test]
+    fn known_hosts_entry_round_trip_through_parse() {
+        let encoded = base64_encode(b"round-trip-key-data");
+        let line = format!("@revoked [example.com]:2222 ssh-ed25519 {encoded} my comment");
+        let entry = KnownHostsEntry::parse(&line).unwrap();
+
+        assert_eq!(entry.hostname(), "example.com");
+        assert_eq!(entry.port(), 2222);
+        assert_eq!(entry.algorithm(), "ssh-ed25519");
+        assert_eq!(entry.key_blob(), b"round-trip-key-data");
+        assert_eq!(entry.comment(), Some("my comment"));
+        assert!(entry.is_revoked());
+    }
+
+    #[test]
+    fn known_hosts_set_hash_hostnames() {
+        let mut store = KnownHosts::new();
+        assert!(!store.inner.read().unwrap().hash_hostnames);
+
+        store.set_hash_hostnames(true);
+        assert!(store.inner.read().unwrap().hash_hostnames);
+    }
+
+    #[test]
+    fn ip_address_bracketed_port() {
+        let encoded = base64_encode(b"ip-bracket-key");
+        let line = format!("[192.168.1.1]:2222 ssh-ed25519 {encoded}");
+        let entry = KnownHostsEntry::parse(&line).unwrap();
+
+        assert_eq!(entry.hostname(), "192.168.1.1");
+        assert_eq!(entry.port(), 2222);
+    }
 }

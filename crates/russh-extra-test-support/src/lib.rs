@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::{Arc, Once};
+use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
 use russh::keys::{Algorithm, HashAlg, PrivateKey};
@@ -12,6 +12,9 @@ use russh::{Channel, ChannelId};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
+
+mod sftp_mock;
+use sftp_mock::MockSftpServer;
 
 static TRACING: Once = Once::new();
 
@@ -126,6 +129,7 @@ pub struct LoopbackServerConfig {
     accept_subsystem: String,
     accept_direct_tcpip: bool,
     accept_tcpip_forward: bool,
+    sftp_mock: MockSftpServer,
 }
 
 impl LoopbackServerConfig {
@@ -142,6 +146,7 @@ impl LoopbackServerConfig {
             accept_subsystem: String::new(),
             accept_direct_tcpip: false,
             accept_tcpip_forward: false,
+            sftp_mock: MockSftpServer::new(),
         }
     }
 
@@ -195,6 +200,30 @@ impl LoopbackServerConfig {
     /// Accept tcpip-forward requests.
     pub fn accept_tcpip_forward(mut self) -> Self {
         self.accept_tcpip_forward = true;
+        self
+    }
+
+    /// Adds a file to the mock SFTP server for SFTP integration tests.
+    ///
+    /// The file content is stored in memory and served through the SFTP
+    /// subsystem when `accept_subsystem("sftp")` is also configured.
+    pub fn sftp_file(self, path: impl Into<String>, data: impl Into<Vec<u8>>, perms: u32) -> Self {
+        let data = data.into();
+        let size = data.len() as u64;
+        self.sftp_mock.add_file(&path.into(), &data, size, perms);
+        self
+    }
+
+    /// Adds a directory to the mock SFTP server.
+    pub fn sftp_dir(self, path: impl Into<String>, entries: &[&str]) -> Self {
+        self.sftp_mock.add_dir(&path.into(), entries);
+        self
+    }
+
+    /// Adds a symlink to the mock SFTP server.
+    pub fn sftp_symlink(self, linkpath: impl Into<String>, targetpath: impl Into<String>) -> Self {
+        self.sftp_mock
+            .add_symlink(&linkpath.into(), &targetpath.into());
         self
     }
 
@@ -399,6 +428,7 @@ impl russh::server::Server for LoopbackRusshServer {
     fn new_client(&mut self, _peer_addr: Option<SocketAddr>) -> Self::Handler {
         LoopbackHandler {
             state: Arc::clone(&self.state),
+            sftp_channels: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -406,6 +436,7 @@ impl russh::server::Server for LoopbackRusshServer {
 #[derive(Clone)]
 struct LoopbackHandler {
     state: Arc<LoopbackServerConfig>,
+    sftp_channels: Arc<Mutex<HashMap<ChannelId, ()>>>,
 }
 
 impl russh::server::Handler for LoopbackHandler {
@@ -559,6 +590,9 @@ impl russh::server::Handler for LoopbackHandler {
     ) -> Result<(), Self::Error> {
         if name == self.state.accept_subsystem {
             session.channel_success(channel)?;
+            if name == "sftp" {
+                self.sftp_channels.lock().unwrap().insert(channel, ());
+            }
         } else {
             session.channel_failure(channel)?;
         }
@@ -592,9 +626,24 @@ impl russh::server::Handler for LoopbackHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        let is_sftp = self.sftp_channels.lock().unwrap().contains_key(&channel);
+        if is_sftp {
+            let sftp = self.state.sftp_mock.clone();
+            sftp.feed(channel, data, session)?;
+            return Ok(());
+        }
         if self.state.accept_shell || !self.state.accept_subsystem.is_empty() {
             session.data(channel, data.to_vec())?;
         }
+        Ok(())
+    }
+
+    async fn channel_close(
+        &mut self,
+        channel: ChannelId,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.sftp_channels.lock().unwrap().remove(&channel);
         Ok(())
     }
 }

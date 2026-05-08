@@ -143,20 +143,19 @@ Design: [Channels and Shells](design/channels-shells.md)
 
 ## Native SFTP
 
-Status: Draft
+Status: Implementing
 Design: [Native SFTP Layer](design/native-sftp.md)
 
-- Draft: native SFTP protocol implementation over `russh` subsystem channels.
-- Draft: file open/read/write/close, directory listing, metadata, rename,
-  remove, mkdir/rmdir, symlink/readlink.
-- Draft: streaming upload/download helpers.
-- Draft: concurrent request pipeline and extension negotiation.
-
-Next acceptance work:
-
-- Specify target SFTP protocol version and extension policy.
-- Specify channel read/write ownership model.
-- Specify packet encoder/decoder tests and malformed packet coverage.
+- Implemented: SFTP v3 client with open, read, write, close, stat, lstat,
+  opendir, readdir, remove, rename, mkdir, rmdir, realpath, readlink, symlink,
+  `read_to_vec`, `write_all`, and Drop auto-close.
+- Implemented: packet encoding/decoding, request pipelining via oneshot
+  channels, status code mapping, and attribute round-trip.
+- Implemented: loopback SFTP integration tests (open/read/write/stat/
+  opendir+readdir/remove/rename/mkdir+rmdir/symlink+readlink/canonicalize/
+  drop-auto-close).
+- Reserved: `SftpServer` marker type; the `sftp` feature is excluded from
+  `full` until the server handler has real runtime behaviour.
 
 ## Forwarding and Tunnels
 

@@ -20,13 +20,56 @@ changes may occur without a new major version.
   the type name.
 - Added `agent` feature flag (`agent = ["client"]`) for SSH agent
   authentication through `$SSH_AUTH_SOCK` on Unix platforms.
-- Changed `sftp` feature to depend on `client` (`sftp = ["client"]`).
+- License changed from MIT-only to MIT OR Apache-2.0 (added `LICENSE-APACHE`
+  file, updated `Cargo.toml` workspace metadata).
 
 ### Added
 
-- Workspace structure with `russh-extra`, `russh-extra-core`,
-  `russh-extra-macros`, `russh-extra-test-support`, and `russh-extra-tests`
-  crates.
+- SFTP v3 server handler trait (`SftpServerHandler`) with `init`, `open`,
+  `close`, `read`, `write`, `remove`, `rename`, `mkdir`, `rmdir`, `opendir`,
+  `readdir`, `stat`, `lstat`, `fstat`, `setstat`, `fsetstat`, `realpath`,
+  `readlink`, and `symlink` methods. All have default "not implemented" stubs.
+- `ServerBuilder::sftp_handler()` for registering an SFTP server handler.
+  Requires both `server` and `sftp` features.
+- SFTP server runtime (`SftpServerRuntime`) with packet reassembly, request
+  dispatch, and response encoding over the subsystem channel.
+- SFTP `set_stat` / `fset_stat` client operations via `SftpClient` and `SftpFile`.
+- SFTP status code name helper (`status_code_name`) for improved error messages.
+- SFTP server-side packet decode functions (`decode_open_request`,
+  `decode_close_request`, `decode_read_request`, etc.) and response encode
+  functions (`encode_version_response`, `encode_status_response`,
+  `encode_handle_response`, etc.).
+- `SftpDirEntry::new()` public constructor for server handlers.
+- `SftpMetadata::to_packet()` conversion for setstat/fsetstat.
+- `SftpMetadata::with_size()`, `with_permissions()`, and `with_uid_gid()` builder
+  methods for server-side handler implementations.
+- `async_trait` re-exported from `russh-extra` under `features = ["sftp", "server"]`
+  so downstream users can implement `SftpServerHandler` without adding the
+  `async_trait` crate.
+- SFTP server integration tests (`sftp_server.rs`) covering open/write/close/stat,
+  read-eof, missing file errors, and file removal through the `SftpServerHandler` trait.
+
+### Changed
+
+- `sftp` feature now included in `full` feature set (client and server SFTP
+  runtimes are implemented and tested).
+- Fixed `SftpFile::close()` and `SftpDir::close()` firing a duplicate close on
+  drop after explicit close was called. Added `closed` flag to prevent the
+  best-effort drop-based close when `close()` was already called.
+- Fixed `encode_init()` to include the extension count field (previously only
+  sent the version, causing the server-side `SftpServerRuntime` to reject the
+  init packet as truncated).
+- `SftpClientRuntime` no longer stores a redundant `session_id` field.
+- Removed `unreachable!()` panic in SFTP `expect_handle`; replaced with
+  proper error reporting via `status_code_name`.
+- Removed all `#[allow(dead_code)]` annotations in `sftp/packet.rs` (now
+  all SFTP constants and functions are used by client or server).
+- Timeout parameter names corrected (`_timeouts`) in tunnel forwarding functions.
+
+### Removed
+
+- `russh-extra-macros` crate removed from workspace (no runtime to ship).
+- `SftpServer` reserved marker type removed; replaced by `SftpServerHandler` trait.
 - Typed error taxonomy with 14 top-level error variants and subcategory kind
   enums via `CategoryError<K>`.
 - Client connect API: `Client::builder()`, `ClientBuilder`, `Client::connect()`.

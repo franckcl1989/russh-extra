@@ -1,43 +1,44 @@
-//! SSH subsystem example.
+//! Raw SSH subsystem channel opening.
 //!
-//! Opens a named subsystem ("echo") against a local loopback server,
-//! sends data and reads the echoed response.
+//! Opens the `sftp` subsystem and performs the version negotiation handshake,
+//! then closes the channel.
 //!
-//! Usage:
-//! ```bash
-//! cargo run --example client_subsystem --features client,shell,aws-lc-rs
-//! ```
+//! Requires:
+//!   SSH_HOST=example.com
+//!   SSH_PORT=22            (optional)
+//!   SSH_USER=deploy
+//!   SSH_PASSWORD=...
+
+use std::env;
 
 use russh_extra::Client;
-use russh_extra_test_support::LoopbackServer;
-use russh_extra_test_support::LoopbackServerConfig;
 
 #[tokio::main]
-async fn main() -> Result<(), russh_extra::BoxError> {
-    let server = LoopbackServer::start(
-        LoopbackServerConfig::new()
-            .password("demo", "demo")
-            .accept_subsystem("echo"),
-    )
-    .await?;
+async fn main() -> russh_extra::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("russh_extra=debug")
+        .init();
+
+    let host = env::var("SSH_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = env::var("SSH_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(22);
+    let username = env::var("SSH_USER").unwrap_or_else(|_| "root".into());
+    let password = env::var("SSH_PASSWORD").unwrap_or_else(|_| "".into());
 
     let session = Client::builder()
-        .endpoint(server.endpoint())
-        .username("demo")
-        .password("demo")
+        .endpoint((host.as_str(), port))
+        .username(username)
+        .password(password)
         .accept_any_host_key()
         .build()
         .connect()
         .await?;
 
-    let mut handle = session.subsystem("echo").build().open().await?;
+    let sub = session.subsystem("sftp").build().open().await?;
+    let _ = sub.write_all(b"raw payload").await;
+    sub.close().await?;
 
-    handle.write_all(b"hello from subsystem\n").await?;
-
-    let mut buf = [0u8; 4096];
-    let n = handle.read(&mut buf).await?;
-    println!("echoed: {}", String::from_utf8_lossy(&buf[..n]));
-
-    handle.close().await?;
     Ok(())
 }

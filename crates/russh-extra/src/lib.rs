@@ -2,9 +2,11 @@
 //!
 //! This crate is the user-facing entry point. It re-exports shared domain
 //! types from `russh-extra-core` and exposes ergonomic builders for clients,
-//! servers, shells, tunnels, and known-hosts verification. The `sftp` feature
-//! currently exposes reserved experimental marker types while the native SFTP
-//! runtime is designed.
+//! servers, shells, tunnels, known-hosts verification, and a native SFTP
+//! client.
+
+#[cfg(all(feature = "sftp", feature = "server"))]
+pub use async_trait::async_trait;
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -49,8 +51,10 @@ pub use server::{
     ShellContext, StreamingExecCmd, StreamingExecContext, SubsystemContext, TcpipForwardContext,
     WindowChange,
 };
+#[cfg(all(feature = "sftp", feature = "server"))]
+pub use sftp::SftpServerHandler;
 #[cfg(feature = "sftp")]
-pub use sftp::{SftpClient, SftpServer};
+pub use sftp::{SftpClient, SftpDir, SftpDirEntry, SftpFile, SftpMetadata, SftpOpenMode};
 #[cfg(feature = "shell")]
 pub use shell::{Shell, ShellBuilder, ShellHandle, Subsystem, SubsystemBuilder};
 #[cfg(feature = "tunnel")]

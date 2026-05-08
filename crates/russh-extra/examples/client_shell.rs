@@ -1,45 +1,59 @@
-//! Interactive shell example with PTY allocation.
+//! Interactive shell with PTY allocation.
 //!
-//! Starts a local loopback server that echoes data, opens a shell with
-//! PTY, writes a line, reads the echoed response, and closes.
+//! Opens a remote shell, sends a command, reads the response, then closes.
 //!
-//! Usage:
-//! ```bash
-//! cargo run --example client_shell --features client,shell,aws-lc-rs
-//! ```
+//! Requires:
+//!   SSH_HOST=example.com
+//!   SSH_PORT=22            (optional)
+//!   SSH_USER=deploy
+//!   SSH_PASSWORD=...
 
-use russh_extra::Client;
-use russh_extra_test_support::LoopbackServer;
-use russh_extra_test_support::LoopbackServerConfig;
+use std::env;
+
+use russh_extra::{Client, Pty};
 
 #[tokio::main]
-async fn main() -> Result<(), russh_extra::BoxError> {
-    let server = LoopbackServer::start(
-        LoopbackServerConfig::new()
-            .password("demo", "demo")
-            .accept_shell()
-            .accept_pty(),
-    )
-    .await?;
+async fn main() -> russh_extra::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("russh_extra=debug")
+        .init();
+
+    let host = env::var("SSH_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = env::var("SSH_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(22);
+    let username = env::var("SSH_USER").unwrap_or_else(|_| "root".into());
+    let password = env::var("SSH_PASSWORD").unwrap_or_else(|_| "".into());
 
     let session = Client::builder()
-        .endpoint(server.endpoint())
-        .username("demo")
-        .password("demo")
+        .endpoint((host.as_str(), port))
+        .username(username)
+        .password(password)
         .accept_any_host_key()
         .build()
         .connect()
         .await?;
 
-    let pty = russh_extra::Pty::new("xterm-256color", 80, 24);
-    let mut handle = session.shell().pty(pty).build().open().await?;
+    let mut shell = session
+        .shell()
+        .pty(Pty::new("xterm-256color", 120, 40))
+        .env("LANG", "C.UTF-8")
+        .build()
+        .open()
+        .await?;
 
-    handle.write_all(b"hello from the shell\n").await?;
+    shell.write_all(b"uname -a\nexit\n").await?;
 
-    let mut buf = [0u8; 4096];
-    let n = handle.read(&mut buf).await?;
-    println!("echoed: {}", String::from_utf8_lossy(&buf[..n]));
+    let mut buf = vec![0u8; 4096];
+    loop {
+        let n = shell.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        eprint!("{}", String::from_utf8_lossy(&buf[..n]));
+    }
 
-    handle.close().await?;
+    shell.close().await?;
     Ok(())
 }

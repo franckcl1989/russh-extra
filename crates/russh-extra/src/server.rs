@@ -78,6 +78,7 @@ impl Server {
     }
 
     /// Runs the server until the given shutdown future resolves.
+    #[tracing::instrument(skip(self, shutdown), fields(listen = %self.config.listen()))]
     pub async fn run_until<F>(self, shutdown: F) -> Result<()>
     where
         F: Future<Output = ()>,
@@ -85,11 +86,11 @@ impl Server {
         self.run_inner(shutdown).await
     }
 
+    #[tracing::instrument(skip(self, shutdown), fields(listen = %self.config.listen()))]
     async fn run_inner<F>(self, shutdown: F) -> Result<()>
     where
         F: Future<Output = ()>,
     {
-        tracing::debug!(listen = %self.config.listen(), "starting ssh server");
         let listener = TcpListener::bind((
             self.config.listen().host().to_owned(),
             self.config.listen().port(),
@@ -174,6 +175,8 @@ pub struct ServerBuilder {
     on_connect: Option<ConnectCallback>,
     on_disconnect: Option<DisconnectCallback>,
     on_auth_success: Option<AuthSuccessCallback>,
+    #[cfg(feature = "sftp")]
+    sftp_handler: Option<std::sync::Arc<dyn crate::sftp::SftpServerHandler + Send + Sync>>,
 }
 
 impl ServerBuilder {
@@ -420,6 +423,20 @@ impl ServerBuilder {
         self
     }
 
+    /// Registers an SFTP server handler.
+    ///
+    /// When the `sftp` subsystem is requested, the handler receives
+    /// decoded SFTP requests and returns responses.  Requires both
+    /// the `sftp` and `server` features.
+    #[cfg(feature = "sftp")]
+    pub fn sftp_handler<H>(mut self, handler: H) -> Self
+    where
+        H: crate::sftp::SftpServerHandler + Send + Sync + 'static,
+    {
+        self.sftp_handler = Some(std::sync::Arc::new(handler));
+        self
+    }
+
     /// Registers an environment-variable handler.
     pub fn env_handler<F, Fut>(mut self, handler: F) -> Self
     where
@@ -570,6 +587,8 @@ impl ServerBuilder {
             on_connect: self.on_connect,
             on_disconnect: self.on_disconnect,
             on_auth_success: self.on_auth_success,
+            #[cfg(feature = "sftp")]
+            sftp_handler: self.sftp_handler,
         });
 
         Ok(Server {
@@ -632,6 +651,8 @@ impl Default for ServerBuilder {
             on_connect: None,
             on_disconnect: None,
             on_auth_success: None,
+            #[cfg(feature = "sftp")]
+            sftp_handler: None,
         }
     }
 }
@@ -1504,6 +1525,8 @@ struct ServerRuntime {
     on_connect: Option<ConnectCallback>,
     on_disconnect: Option<DisconnectCallback>,
     on_auth_success: Option<AuthSuccessCallback>,
+    #[cfg(feature = "sftp")]
+    sftp_handler: Option<std::sync::Arc<dyn crate::sftp::SftpServerHandler + Send + Sync>>,
 }
 
 impl ServerRuntime {
@@ -1571,6 +1594,8 @@ impl server::Server for HighLevelRusshServer {
             disconnect_notified: Arc::new(Mutex::new(false)),
             stdin_txs: Arc::new(Mutex::new(HashMap::new())),
             env_vars: HashMap::new(),
+            #[cfg(feature = "sftp")]
+            sftp: None,
         }
     }
 
@@ -1583,7 +1608,6 @@ impl server::Server for HighLevelRusshServer {
     }
 }
 
-#[derive(Clone)]
 struct HighLevelRusshHandler {
     runtime: Arc<ServerRuntime>,
     session_id: SessionId,
@@ -1593,6 +1617,25 @@ struct HighLevelRusshHandler {
     disconnect_notified: Arc<Mutex<bool>>,
     stdin_txs: Arc<Mutex<HashMap<ChannelId, mpsc::UnboundedSender<Bytes>>>>,
     env_vars: HashMap<ChannelId, HashMap<String, String>>,
+    #[cfg(feature = "sftp")]
+    sftp: Option<crate::sftp::server::SftpServerRuntime>,
+}
+
+impl Clone for HighLevelRusshHandler {
+    fn clone(&self) -> Self {
+        Self {
+            runtime: Arc::clone(&self.runtime),
+            session_id: self.session_id,
+            peer_addr: self.peer_addr,
+            username: self.username.clone(),
+            open_sessions: self.open_sessions,
+            disconnect_notified: Arc::clone(&self.disconnect_notified),
+            stdin_txs: Arc::clone(&self.stdin_txs),
+            env_vars: self.env_vars.clone(),
+            #[cfg(feature = "sftp")]
+            sftp: None,
+        }
+    }
 }
 
 impl HighLevelRusshHandler {
@@ -1896,6 +1939,10 @@ impl server::Handler for HighLevelRusshHandler {
         self.open_sessions = self.open_sessions.saturating_sub(1);
         self.stdin_txs.lock().unwrap().remove(&channel);
         self.env_vars.remove(&channel);
+        #[cfg(feature = "sftp")]
+        if let Some(sftp) = &mut self.sftp {
+            sftp.handle_channel_close(channel);
+        }
         Ok(())
     }
 
@@ -1912,11 +1959,23 @@ impl server::Handler for HighLevelRusshHandler {
         &mut self,
         channel: ChannelId,
         data: &[u8],
-        _session: &mut server::Session,
+        session: &mut server::Session,
     ) -> std::result::Result<(), ServerRuntimeError> {
+        #[cfg(feature = "sftp")]
+        if let Some(sftp) = &mut self.sftp
+            && sftp.is_sftp_channel(channel)
+        {
+            sftp.handle_data(channel, data, session)
+                .await
+                .map_err(ServerRuntimeError::HighLevel)?;
+            return Ok(());
+        }
+
         if let Some(tx) = self.stdin_txs.lock().unwrap().get(&channel) {
             let _ = tx.send(Bytes::copy_from_slice(data));
         }
+        #[cfg(not(feature = "sftp"))]
+        let _ = session;
         Ok(())
     }
 
@@ -2095,6 +2154,17 @@ impl server::Handler for HighLevelRusshHandler {
         name: &str,
         session: &mut server::Session,
     ) -> std::result::Result<(), ServerRuntimeError> {
+        #[cfg(feature = "sftp")]
+        if name == "sftp"
+            && let Some(handler) = self.runtime.sftp_handler.clone()
+        {
+            let mut sftp = crate::sftp::server::SftpServerRuntime::new(handler);
+            sftp.register_channel(channel);
+            self.sftp = Some(sftp);
+            session.channel_success(channel)?;
+            return Ok(());
+        }
+
         let ctx = SubsystemContext {
             session: self.session_context(),
             channel,

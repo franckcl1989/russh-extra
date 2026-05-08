@@ -27,5 +27,5 @@ to Accepted and make sure the roadmap points to it.
 - [Known Hosts](./known-hosts.md) - Implemented (first runtime slice)
 - [Public Key and Agent Authentication](./public-key-auth.md) - Implemented (first runtime slice)
 - [Channels and Shells](./channels-shells.md) - Implemented (first runtime slice)
-- [Native SFTP Layer](./native-sftp.md) - Draft
+- [Native SFTP Layer](./native-sftp.md) - Accepted
 - [Forwarding and Tunnels](./forwarding-tunnels.md) - Implementing

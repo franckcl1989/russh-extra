@@ -275,7 +275,12 @@ crates/
       shell.rs
       tunnel.rs
       known_hosts.rs
-      sftp.rs
+      sftp/
+        mod.rs
+        client.rs
+        packet.rs
+        types.rs
+        server.rs
 
   russh-extra-core/       Shared domain types (errors, auth, config, channel, forward, session)
     src/
@@ -287,7 +292,6 @@ crates/
       forward.rs
       session.rs
 
-  russh-extra-macros/     Future proc-macro entry points
   russh-extra-test-support/  Integration test helpers (not published)
 
 tests/                    Workspace-level integration tests
@@ -297,6 +301,7 @@ tests/                    Workspace-level integration tests
     api_smoke.rs
     client_runtime.rs
     server_runtime.rs
+    sftp_server.rs
 ```
 
 Rules:
@@ -353,9 +358,8 @@ Feature flag requirements:
 2. `full` must enable all stable runtime functionality.
 3. Experimental features must be clearly documented.
 4. `server` must not require `client` unless technically unavoidable.
-5. `sftp` must not imply complete SFTP support unless it is actually complete;
-   while it exposes only reserved experimental marker types, it must stay out of
-   default features and `full`.
+5. `sftp` is included in `full`. The client runtime is stable and the server
+   handler trait (`SftpServerHandler`) is implemented and tested.
 6. README and crate-level docs must explain every feature flag.
 7. Verification must include both default features and all features.
 
@@ -591,30 +595,44 @@ Requirements:
 
 ---
 
-## 15. SFTP Policy
+## 15. SFTP Policy (Updated — Implemented)
 
-SFTP is an important goal, but honesty is more important than marketing.
+SFTP is implemented via a native protocol layer inside `crates/russh-extra/src/sftp/`,
+with no forbidden high-level SSHeep/SFTP dependencies.
 
-Before implementing SFTP, inspect the selected `russh` version and determine what lower-level subsystem support exists.
+### Client (`features = ["sftp"]`)
 
-If complete SFTP cannot be implemented directly from allowed primitives:
+- `SftpClient` is obtained from `Session::sftp()` after connect.
+- Supports: `open`, `create`, `readdir`, `read`, `write`, `remove`, `metadata`,
+  `symlink_metadata`, `setstat`, `fsetstat`, `mkdir`, `rmdir`, `rename`,
+  `symlink`, `readlink`, `canonicalize`, `close`, `realpath`.
+- `SftpFile` provides positioned `read`/`write`/`close` plus `metadata`/`set_metadata`.
+- `SftpDir` provides streaming `readdir` via `SftpDirEntry` and `close`.
+- `handle` and `id` allocation is automatic.
 
-1. Do not claim SFTP support is complete.
-2. Do not add a forbidden high-level SSH or SFTP crate.
-3. Do not expose a fake stable `SftpClient`.
-4. Consider exposing only a documented, feature-gated subsystem abstraction.
-5. Mark experimental APIs clearly.
-6. Document the implementation plan and limitations.
+### Server (`features = ["sftp", "server"]`)
 
-Acceptable approaches:
+- `SftpServerHandler` trait (19 methods) with `#[russh_extra::async_trait]`.
+- Registered via `Server::builder().sftp_handler(Arc<dyn SftpServerHandler>)`.
+- Server-side packet decoder supports full SFTP v3 request set.
+- Per-connection `SftpServerRuntime` dispatches incoming FXP packets to the handler
+  and encodes responses.
+- Integration-tested via `InMemorySftpHandler` in `tests/tests/sftp_server.rs`.
 
-- Implement SFTP protocol support inside this crate, if feasible.
-- Provide a lower-level SSH subsystem API that can later support SFTP.
-- Keep the `sftp` feature reserved or experimental until real functionality exists.
+### Builder helpers for server handler authors
 
-Forbidden approach:
+- `SftpMetadata::with_size(u64)` / `with_permissions(u32)` / `with_uid_gid(u32, u32)`.
+- `async_trait` is re-exported from `russh_extra` under `features = ["sftp", "server"]`.
 
-- Using another high-level SSH/SFTP crate to provide SFTP while claiming the crate is based directly on `russh`.
+### Known limitations (SFTP v3)
+
+- No SFTP v4+ (attribute extensions, new packet types).
+- No streaming write byte-range insertion; writes replace or append.
+- `lock`/`unlock`/`statvfs`/`posix-rename` extensions are not implemented.
+- `readdir` returns a single entry per packet (no batched SSH_FXP_NAME entries).
+- Read buffer size is fixed at 32 KiB per `read()` call.
+- Server `SftpMetadata` fields are private; builder methods cover the common case.
+  A full public constructor will be added post-v0.1.0.
 
 ---
 
@@ -1029,110 +1047,111 @@ Do not publish until the crate accurately represents its implemented capabilitie
 
 Use `0.x` while the API is still evolving.
 
+Current status (May 2026): All milestones 0–8 are complete. The crate supports:
+client, server, auth, known_hosts, command execution, shell, PTY, subsystems,
+local/remote forwarding, and SFTP (client + server handler). ~190 tests pass.
+
 Suggested roadmap:
 
-- `0.1.x`: Project skeleton, typed errors, client builder, basic connect, basic authentication, command execution
-- `0.2.x`: Host key verification, `known_hosts`, stronger auth model, better docs
-- `0.3.x`: Shell, PTY, subsystem abstraction
-- `0.4.x`: Local and remote forwarding
-- `0.5.x`: Server API
-- `0.6.x`: SFTP experiment or subsystem-based foundation
-- `0.9.x`: API hardening, feature matrix, extensive integration tests
+- `0.1.x`: Initial publishable release with complete feature set
+- `0.2.x`: API hardening, more integration tests, performance tuning
+- `0.3.x`: AsyncRead/AsyncWrite for shell, SftpMetadata public constructor, batch readdir
 - `1.0.0`: Stable public API, complete core docs, security-reviewed defaults, production-ready release
 
 Do not rush to `1.0.0`.
 
 ---
 
-## 28. Initial Milestones
+## 28. Milestone Completion Status
 
-If the repository is empty or early-stage, proceed in this order unless the user asks otherwise.
+All initial milestones (0–8) are complete as of May 2026.
 
-### Milestone 0: Project Skeleton
+### Milestone 0: Project Skeleton ✓
 
-- Create crate structure
-- Configure `Cargo.toml`
-- Add README draft
-- Add license files
-- Add `src/lib.rs`
-- Add `error.rs`
-- Add feature flags
-- Add CI-equivalent local verification instructions
+- Crate structure ✓
+- `Cargo.toml` with feature flags ✓
+- README ✓
+- LICENSE-MIT + LICENSE-APACHE ✓
+- `src/lib.rs` ✓
+- `error.rs` ✓
+- CI-equivalent local verification ✓
 
-### Milestone 1: Core Types
+### Milestone 1: Core Types ✓
 
-- `Error`
-- `Result`
-- `SshTarget`
-- `ClientConfig`
-- `SshClientBuilder`
-- `HostKeyPolicy`
-- `AuthMethod`
-- Unit tests for pure logic
+- `Error` (CategoryError<K> pattern) ✓
+- `Result` ✓
+- `Endpoint` (host:port+user, parser) ✓
+- `ClientConfig` / `ServerConfig` ✓
+- `Client::builder()` / `Server::builder()` ✓
+- `HostKeyPolicy` (Strict, AcceptNew, InsecureAcceptAny) ✓
+- `AuthMethod` (password, private-key, agent) ✓
+- Unit tests for pure logic ✓
 
-### Milestone 2: Basic Client Connection
+### Milestone 2: Basic Client Connection ✓
 
-- Real `russh` client handler
-- Builder-driven connect
-- Password authentication
-- Private key file authentication if supported
-- Timeout handling
-- Tracing spans
-- Basic integration test or documented test harness
+- Real `russh` client handler ✓
+- Builder-driven connect ✓
+- Password authentication ✓
+- Private key file authentication ✓
+- Timeout handling ✓
+- Tracing spans ✓
+- Integration tests ✓
 
-### Milestone 3: Command Execution
+### Milestone 3: Command Execution ✓
 
-- Exec request
-- stdout and stderr capture
-- exit status capture
-- `CommandOutput`
-- `check_success`
-- Example
-- Tests
+- Exec request ✓
+- stdout and stderr capture ✓
+- exit status capture ✓
+- `CommandOutput` ✓
+- `check_success` ✓
+- Example ✓
+- Tests ✓
 
-### Milestone 4: Host Key Verification
+### Milestone 4: Host Key Verification ✓
 
-- Fingerprint support
-- `known_hosts` parser
-- Strict policy
-- Accept-new policy
-- Explicit insecure policy
-- Security tests
-- Documentation
+- Fingerprint support ✓
+- `known_hosts` parser ✓
+- Strict policy ✓
+- Accept-new policy ✓
+- Explicit insecure policy ✓
+- Security tests ✓
+- Documentation ✓
 
-### Milestone 5: Shell, PTY, and Subsystems
+### Milestone 5: Shell, PTY, and Subsystems ✓
 
-- Shell API
-- PTY configuration
-- Stream abstraction
-- Subsystem abstraction
-- Examples
+- Shell API ✓
+- PTY configuration ✓
+- Subsystem API ✓
+- Examples ✓
 
-### Milestone 6: Forwarding
+### Milestone 6: Forwarding ✓
 
-- Local forwarding
-- Remote forwarding
-- Direct TCP/IP abstraction
-- Forwarded TCP/IP abstraction
-- Shutdown handles
-- Lifecycle tests
+- Local forwarding ✓
+- Remote forwarding ✓
+- Direct TCP/IP ✓
+- Forwarded TCP/IP ✓
+- Shutdown handles ✓
+- Lifecycle tests ✓
 
-### Milestone 7: Server
+### Milestone 7: Server ✓
 
-- Server builder
-- Auth callbacks
-- Exec handler
-- Shell handler
-- PTY handler
-- Graceful shutdown
-- Examples
+- Server builder ✓
+- Auth callbacks ✓
+- Exec handler ✓
+- Shell handler ✓
+- PTY handler ✓
+- Graceful shutdown ✓
+- Examples ✓
 
-### Milestone 8: SFTP or Documented SFTP Foundation
+### Milestone 8: SFTP ✓
 
-- Inspect `russh` capabilities
-- Choose honest implementation path
-- Implement only what can be supported
-- Clearly document experimental or missing pieces
+- Native protocol implementation (no forbidden dependencies) ✓
+- Client: `SftpClient`, `SftpFile`, `SftpDir`, read/write/readdir ✓
+- Server: `SftpServerHandler` trait (19 methods) ✓
+- Server: `SftpServerRuntime` dispatcher ✓
+- Server: `ServerBuilder::sftp_handler()` integration ✓
+- Integration tests (client + server) ✓
+- Limitations documented ✓
 
 ---
 

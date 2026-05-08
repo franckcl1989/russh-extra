@@ -26,9 +26,10 @@ server = ["_russh"]
 sftp = ["client"]
 shell = ["client"]
 tunnel = ["client", "server"]
-full = ["client", "server", "shell", "tunnel", "known-hosts", "agent", "aws-lc-rs", "flate2", "rsa"]
+full = ["client", "server", "shell", "tunnel", "known-hosts", "agent", "sftp", "aws-lc-rs", "flate2", "rsa"]
 
 [dependencies]
+async-trait.workspace = true
 base64.workspace = true
 bytes.workspace = true
 futures-core.workspace = true
@@ -41,7 +42,9 @@ tracing.workspace = true
 [dev-dependencies]
 rand.workspace = true
 russh-extra-test-support.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
+tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true

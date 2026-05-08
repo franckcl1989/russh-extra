@@ -197,7 +197,7 @@ async fn start_local_forward(
     handle: Arc<Mutex<russh::client::Handle<ClientHandler>>>,
     bind: &TcpEndpoint,
     target: &TcpEndpoint,
-    timeouts: Timeouts,
+    _timeouts: Timeouts,
 ) -> Result<Tunnel> {
     let bind_addr = format!("{}:{}", bind.host(), bind.port());
     let listener = TcpListener::bind(&bind_addr).await.map_err(|_e| {
@@ -217,7 +217,6 @@ async fn start_local_forward(
     let (close_tx, close_rx) = oneshot::channel::<()>();
     let spawn_target = target.clone();
     let tunnel_target = target.clone();
-    let _timeouts = timeouts;
 
     let task = tokio::spawn(async move {
         run_local_accept_loop(listener, handle, spawn_target, close_rx).await;

@@ -168,20 +168,18 @@ pub enum ChannelErrorKind {
 /// SFTP failure category.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SftpErrorKind {
-    /// Remote SFTP status response indicated failure.
-    Status,
-    /// Packet was malformed.
-    MalformedPacket,
-    /// Protocol version is unsupported.
-    UnsupportedVersion,
-    /// Required extension is unsupported.
-    UnsupportedExtension,
+    /// Remote SFTP status response indicated failure (SSH_FX_* code).
+    RemoteStatus,
+    /// Packet was malformed or protocol framing is invalid.
+    Protocol,
+    /// SSH channel read/write failure.
+    ChannelIo,
     /// Response request ID did not match an in-flight request.
-    RequestIdMismatch,
-    /// Local I/O failed while handling SFTP.
-    LocalIo,
-    /// Remote disconnected while SFTP work was in flight.
-    RemoteDisconnect,
+    UnexpectedResponse,
+    /// Protocol version is unsupported by the server.
+    UnsupportedVersion,
+    /// Feature not yet implemented.
+    Unsupported,
 }
 
 /// Forwarding failure category.
@@ -423,6 +421,18 @@ impl Error {
     /// Creates an SFTP error.
     pub fn sftp(kind: SftpErrorKind, message: impl Into<Cow<'static, str>>) -> Self {
         Self::Sftp(SftpError::new(kind, message))
+    }
+
+    /// Creates an SFTP error with a lower-level source.
+    pub fn sftp_with_source<E>(
+        kind: SftpErrorKind,
+        message: impl Into<Cow<'static, str>>,
+        source: E,
+    ) -> Self
+    where
+        E: StdError + Send + Sync + 'static,
+    {
+        Self::Sftp(SftpError::with_source(kind, message, source))
     }
 
     /// Creates a forwarding error.

@@ -65,8 +65,8 @@ impl Client {
     }
 
     /// Connects to the configured endpoint.
+    #[tracing::instrument(skip(self), fields(host = %self.config.endpoint().host(), port = self.config.endpoint().port()))]
     pub async fn connect(&self) -> Result<Session> {
-        tracing::debug!(endpoint = %self.config.endpoint(), "connecting ssh client");
         let endpoint = self.config.endpoint().clone();
         let addrs = (endpoint.host().to_owned(), endpoint.port());
         let handler = ClientHandler::new(
@@ -499,13 +499,10 @@ impl Session {
     }
 
     /// Runs a remote command.
+    #[tracing::instrument(skip(self, command), fields(session = %self.id))]
     pub async fn command(&self, command: impl Into<RemoteCommand>) -> Result<CommandOutput> {
         let command = command.into();
-        tracing::debug!(
-            session = %self.id,
-            command_len = command.program().len(),
-            "running remote command"
-        );
+        tracing::debug!(program = %command.program(), "running remote command");
 
         let handle = self.handle.as_ref().ok_or_else(|| {
             Error::unsupported("remote command execution requires a connected session")
@@ -639,7 +636,13 @@ impl Session {
     /// Opens an SFTP client over this session.
     #[cfg(feature = "sftp")]
     pub async fn sftp(&self) -> Result<crate::sftp::SftpClient> {
-        crate::sftp::SftpClient::from_session(self.id).open().await
+        let handle = self
+            .handle
+            .as_ref()
+            .ok_or_else(|| Error::unsupported("SFTP requires a connected session"))?;
+        crate::sftp::SftpClient::from_session(self.id)
+            .connect(handle.clone())
+            .await
     }
 
     /// Creates a tunnel builder for this session.
@@ -670,6 +673,28 @@ impl Session {
             target.into(),
             self.timeouts.clone(),
         )
+    }
+
+    /// Returns whether this session is currently connected.
+    pub fn is_connected(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    /// Sends a disconnect message and consumes the session.
+    ///
+    /// Underlying SSH resources are released. The session must not be used
+    /// after this call.
+    #[tracing::instrument(skip(self), fields(session = %self.id))]
+    pub async fn disconnect(self) -> Result<()> {
+        let Some(handle) = self.handle else {
+            return Ok(());
+        };
+        let guard = handle.lock().await;
+        guard
+            .disconnect(russh::Disconnect::ByApplication, "", "")
+            .await
+            .map_err(|e| Error::ssh_with_source("session disconnect failed", e))?;
+        Ok(())
     }
 }
 
@@ -1412,5 +1437,11 @@ mod tests {
 
         assert_eq!(command.limits().stdout(), 512);
         assert_eq!(command.limits().stderr(), 256);
+    }
+
+    #[test]
+    fn session_is_connected_reflects_handle_presence() {
+        let session = Session::new(SessionId::next(), Endpoint::ssh("example.com"));
+        assert!(!session.is_connected());
     }
 }

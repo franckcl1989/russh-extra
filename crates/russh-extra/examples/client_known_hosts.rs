@@ -1,57 +1,74 @@
-//! Demonstrates client connect with known-hosts verification.
+//! Known hosts: loading, trust-on-first-use, and saving.
 //!
-//! This example shows both strict verification (rejects unknown hosts) and
-//! trust-on-first-use (accepts and persists new keys) against a loopback server.
+//! Demonstrates three common workflows:
+//!   1. Connect with a pre-existing known_hosts file (strict checking).
+//!   2. Connect with trust-on-first-use, then persist the new key.
+//!   3. Detect and report changed host keys.
 //!
-//! Usage:
-//! ```bash
-//! cargo run --example client_known_hosts --features client,known-hosts,aws-lc-rs
-//! ```
+//! Requires:
+//!   SSH_HOST=example.com
+//!   SSH_PORT=22         (optional)
+//!   SSH_USER=deploy
+//!   SSH_PASSWORD=...
+
+use std::env;
 
 use russh_extra::{Client, KnownHosts};
-use russh_extra_test_support::{CommandResponse, LoopbackServer, LoopbackServerConfig};
 
 #[tokio::main]
-async fn main() -> Result<(), russh_extra::BoxError> {
-    let server = LoopbackServer::start(
-        LoopbackServerConfig::new()
-            .password("demo", "demo")
-            .command("whoami", CommandResponse::stdout("demo\n")),
-    )
-    .await?;
+async fn main() -> russh_extra::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("russh_extra=debug")
+        .init();
 
-    // Strict mode: an empty known-hosts store rejects unknown host keys.
-    let known_hosts = KnownHosts::new();
-    let result = Client::builder()
-        .endpoint(server.endpoint())
-        .username("demo")
-        .password("demo")
-        .known_hosts(known_hosts.clone())
-        .build()
-        .connect()
-        .await;
+    let host = env::var("SSH_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = env::var("SSH_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(22);
+    let username = env::var("SSH_USER").unwrap_or_else(|_| "root".into());
+    let password = env::var("SSH_PASSWORD").unwrap_or_else(|_| "".into());
 
-    match result {
-        Err(e) => println!("strict mode rejected unknown host: {e}"),
-        Ok(_) => println!("strict mode unexpectedly accepted unknown host"),
+    // --- Workflow 1: connect with strict known_hosts ---
+    match KnownHosts::load("~/.ssh/known_hosts") {
+        Ok(known_hosts) => {
+            println!(
+                "Loaded known_hosts file ({} entries)",
+                known_hosts.entry_count()
+            );
+
+            let session = Client::builder()
+                .endpoint((host.as_str(), port))
+                .username(username.as_str())
+                .password(password.as_str())
+                .known_hosts(known_hosts)
+                .build()
+                .connect()
+                .await?;
+
+            let output = session.command("echo strict check passed").await?;
+            println!("{}", String::from_utf8_lossy(&output.stdout).trim());
+        }
+        Err(_) => {
+            // --- Workflow 2: trust-on-first-use, then save ---
+            let known_hosts = KnownHosts::new();
+
+            let session = Client::builder()
+                .endpoint((host.as_str(), port))
+                .username(username.as_str())
+                .password(password.as_str())
+                .known_hosts_accept_new(known_hosts.clone())
+                .build()
+                .connect()
+                .await?;
+
+            let output = session.command("echo trusted").await?;
+            println!("{}", String::from_utf8_lossy(&output.stdout).trim());
+
+            known_hosts.save("~/.ssh/known_hosts")?;
+            println!("Saved new host key to known_hosts");
+        }
     }
-
-    // Trust-on-first-use: accept the unknown key and add it to the store.
-    let session = Client::builder()
-        .endpoint(server.endpoint())
-        .username("demo")
-        .password("demo")
-        .known_hosts_accept_new(known_hosts)
-        .build()
-        .connect()
-        .await?;
-
-    let output = session.command("whoami").await?;
-    println!(
-        "trust-on-first-use succeeded: {}",
-        String::from_utf8_lossy(&output.stdout)
-    );
-    println!("exit: {:?}", output.exit);
 
     Ok(())
 }

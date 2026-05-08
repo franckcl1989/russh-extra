@@ -201,16 +201,9 @@ shell.resize(80, 24).await?;
 shell.close().await?;
 ```
 
-Subsystem channels use the same streaming handle:
-
-```rust
-let mut subsystem = session.subsystem("sftp").build().open().await?;
-subsystem.write_all(b"payload").await?;
-subsystem.close().await?;
-```
-
-This is a generic subsystem channel. The high-level SFTP protocol layer is not
-implemented yet.
+Subsystem channels use the same streaming handle. For a higher-level SFTP
+experience, enable the `sftp` feature and use `Session::sftp()` (see the
+[SFTP](#sftp) section below).
 
 ## Port Forwarding
 
@@ -297,13 +290,48 @@ authentication, streaming exec handlers, shell/PTY/subsystem hooks,
 environment-variable propagation, forwarding authorization hooks, lifecycle
 hooks, and graceful shutdown handles.
 
-## SFTP Status
+## SFTP
 
-The `sftp` feature is reserved for the native SFTP runtime. It currently exposes
-experimental marker types, and `Session::sftp()` returns `Error::Unsupported`.
-A native SFTP packet layer over `russh` subsystem channels is planned, but no
-high-level SFTP file operations are implemented. The feature is excluded from
-default features and `full` until real runtime behavior exists.
+Enable the `sftp` feature for native SFTP v3 client operations over SSH
+subsystem channels:
+
+```rust
+let sftp = session.sftp().await?;
+
+let metadata = sftp.metadata("/etc/hostname").await?;
+println!("size: {:?}", metadata.size());
+
+let mut dir = sftp.opendir("/tmp").await?;
+while let Some(entry) = sftp.readdir(&mut dir).await? {
+    println!("{}", entry.name());
+}
+dir.close().await?;
+
+let contents = sftp.read_to_vec("/etc/hostname").await?;
+```
+
+The SFTP client supports open, read, write, close, stat, lstat, fstat,
+setstat, fsetstat, opendir, readdir, remove, rename, mkdir, rmdir, realpath,
+readlink, and symlink operations. File and directory handles auto-close on drop.
+
+Server-side SFTP is available via the `SftpServerHandler` trait when both
+`server` and `sftp` features are enabled:
+
+```rust
+use russh_extra::{SftpServerHandler, SftpMetadata, SftpDirEntry};
+
+struct MyFs;
+
+#[async_trait::async_trait]
+impl SftpServerHandler for MyFs {
+    async fn read(&self, _id: u32, handle: String, offset: u64, len: u32)
+        -> russh_extra::Result<Vec<u8>>
+    {
+        // Read from a virtual file identified by handle
+        Ok(vec![b'x'; len as usize])
+    }
+}
+```
 
 ## Feature Flags
 
@@ -316,12 +344,12 @@ default features and `full` until real runtime behavior exists.
 | `shell` | no | Interactive shell, PTY, resize, and subsystem channels |
 | `tunnel` | no | Local/remote TCP forwarding and direct TCP channels |
 | `agent` | no | SSH agent authentication using `$SSH_AUTH_SOCK` on Unix |
-| `sftp` | no | Reserved experimental SFTP marker types; runtime not implemented |
+| `sftp` | no | Native SFTP v3 client and server (`SftpClient` + `SftpServerHandler` trait) |
 | `ring` | no | Alternative `russh` crypto backend via ring |
 | `flate2` | no | SSH compression support from `russh` |
 | `rsa` | no | RSA key algorithm support from `russh` |
 | `serde` | no | Serde serialization for config types |
-| `full` | no | Enables stable runtime features; excludes reserved SFTP markers |
+| `full` | no | All stable runtime features |
 
 Feature-gate checks:
 
@@ -393,32 +421,50 @@ This repository is pre-1.0 and AI-driven.
 
 Implemented and covered by local tests:
 
-- Client connect with password authentication.
+- Client connect with password, private-key, agent, and keyboard-interactive authentication.
 - Strict, pinned SHA256, and known-hosts host-key verification.
 - Trust-on-first-use in the in-memory known-hosts store.
-- Changed host-key rejection for known-hosts entries.
+- Changed and revoked host-key rejection for known-hosts entries.
 - Buffered `Session::command()` with stdout/stderr capture, stdin, limits, and exit metadata.
-- Client private-key authentication and server public-key auth callbacks.
-- Client and server keyboard-interactive authentication.
-- Server listener, password auth, public-key auth, exact command routing, streaming exec, env propagation, lifecycle hooks, and shutdown.
-- Interactive shell, PTY allocation, resize, and subsystem channel opening.
-- Direct TCP channels and local TCP forwarding over `russh` channel primitives.
-- Typed error taxonomy and local loopback test fixtures.
-
-Implemented but still being hardened:
-
-- Remote TCP forwarding runtime.
-- Forwarding lifecycle edge cases and broader forwarding integration tests.
-- Agent authentication against real user agents.
-- Known-hosts save/deduplication workflows.
+- Explicit `Session::disconnect()` for graceful client-side connection teardown.
+- Server listener, password auth, public-key auth, keyboard-interactive auth, exact command routing, streaming exec, env propagation, lifecycle hooks, and graceful shutdown.
+- Interactive shell, PTY allocation, resize, signal, and subsystem channel opening.
+- Native SFTP v3 client: open, read, write, close, stat, lstat, opendir, readdir, remove, rename, mkdir, rmdir, realpath, readlink, symlink.
+- Direct TCP channels, local TCP forwarding, and remote TCP forwarding.
+- Structured tracing spans on connect, command, disconnect, and server run entry points.
+- Typed error taxonomy and local loopback test fixtures (187 tests).
+- 10 example programs covering client, server, shell, subsystem, known-hosts, SFTP, and forwarding workflows.
 
 Not yet implemented:
 
-- Native SFTP packet/runtime layer and high-level file operations.
 - Hashed hostname known-hosts matching and writing.
 - Streamlocal forwarding.
 - Dynamic SOCKS-style forwarding.
-- Split shell read/write halves and `AsyncRead`/`AsyncWrite` trait impls for high-level shell/tunnel handles.
+- Split shell/stream read/write halves and `AsyncRead`/`AsyncWrite` trait impls.
+
+## Examples
+
+The `crates/russh-extra/examples/` directory contains working example programs:
+
+| Example | Feature flags | Description |
+|---|---|---|
+| [`client_exec`](crates/russh-extra/examples/client_exec.rs) | `client` | Remote command execution with password auth |
+| [`client_private_key`](crates/russh-extra/examples/client_private_key.rs) | `client`, `known-hosts` | Private key auth with known-hosts verification |
+| [`client_shell`](crates/russh-extra/examples/client_shell.rs) | `client`, `shell` | Interactive shell with PTY allocation |
+| [`client_subsystem`](crates/russh-extra/examples/client_subsystem.rs) | `client`, `shell` | Raw SSH subsystem channel |
+| [`client_known_hosts`](crates/russh-extra/examples/client_known_hosts.rs) | `client`, `known-hosts` | Known-hosts loading, TOFU, and saving |
+| [`client_sftp`](crates/russh-extra/examples/client_sftp.rs) | `client`, `sftp` | SFTP file read, upload, and directory listing |
+| [`local_forward`](crates/russh-extra/examples/local_forward.rs) | `client`, `tunnel` | Local TCP port forwarding |
+| [`remote_forward`](crates/russh-extra/examples/remote_forward.rs) | `client`, `tunnel` | Remote TCP port forwarding |
+| [`server_password`](crates/russh-extra/examples/server_password.rs) | `server` | Server with password auth and exec routing |
+| [`server_public_key`](crates/russh-extra/examples/server_public_key.rs) | `server` | Server with public key authentication |
+
+Each example uses environment variables for configuration. Run with:
+
+```bash
+SSH_HOST=localhost SSH_PORT=2222 SSH_USER=test SSH_PASSWORD=secret \
+  cargo run --example client_exec --features client,aws-lc-rs
+```
 
 ## Workspace
 
@@ -426,9 +472,8 @@ Not yet implemented:
 |---|---|
 | `russh-extra` | User-facing high-level API |
 | `russh-extra-core` | Shared SSH domain types and errors |
-| `russh-extra-macros` | Future proc-macro entry points |
-| `russh-extra-test-support` | Integration test helpers |
-| `russh-extra-tests` | Workspace-level tests |
+| `russh-extra-test-support` | Integration test helpers (not published) |
+| `russh-extra-tests` | Workspace-level tests (not published) |
 
 ## MSRV
 

@@ -1,36 +1,40 @@
-//! Demonstrates client connect, pinned host-key verification, password
-//! authentication, and buffered command execution.
+//! Remote command execution with password authentication.
 //!
-//! This example runs against a local loopback SSH server so it works without
-//! external SSH hosts or configuration.
+//! Requires:
+//!   SSH_HOST=example.com
+//!   SSH_PORT=22        (optional, defaults to 22)
+//!   SSH_USER=deploy
+//!   SSH_PASSWORD=...
+
+use std::env;
 
 use russh_extra::Client;
-use russh_extra_test_support::{CommandResponse, LoopbackServer, LoopbackServerConfig};
 
 #[tokio::main]
-async fn main() -> Result<(), russh_extra::BoxError> {
-    let server = LoopbackServer::start(
-        LoopbackServerConfig::new()
-            .password("demo", "demo")
-            .command("whoami", CommandResponse::stdout("demo\n")),
-    )
-    .await?;
+async fn main() -> russh_extra::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter("russh_extra=debug")
+        .init();
+
+    let host = env::var("SSH_HOST").unwrap_or_else(|_| "127.0.0.1".into());
+    let port: u16 = env::var("SSH_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(22);
+    let username = env::var("SSH_USER").unwrap_or_else(|_| "root".into());
+    let password = env::var("SSH_PASSWORD").unwrap_or_else(|_| "".into());
 
     let session = Client::builder()
-        .endpoint(server.endpoint())
-        .username("demo")
-        .password("demo")
+        .endpoint((host.as_str(), port))
+        .username(username)
+        .password(password)
         .accept_any_host_key()
         .build()
         .connect()
         .await?;
 
-    let output = session.command("whoami").await?;
-
-    println!("stdout: {}", String::from_utf8_lossy(&output.stdout));
-    println!("exit: {:?}", output.exit);
-
-    assert!(output.success());
+    let output = session.command("uname -a").await?;
+    println!("{}", String::from_utf8_lossy(&output.stdout));
 
     Ok(())
 }
