@@ -1791,7 +1791,6 @@ dependencies = [
  "rand 0.10.1",
  "russh",
  "russh-extra-core",
- "russh-extra-test-support",
  "tempfile",
  "tokio",
  "tracing",
