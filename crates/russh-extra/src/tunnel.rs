@@ -12,7 +12,9 @@ use russh_extra_core::{
     TcpEndpoint, Timeouts,
 };
 use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
+use tokio::net::{TcpListener, TcpStream};
+#[cfg(unix)]
+use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
@@ -126,7 +128,16 @@ impl TunnelBuilder {
                 target,
             } => match direction {
                 ForwardDirection::Local => {
-                    start_local_streamlocal_forward(handle, bind, target, self.timeouts).await
+                    #[cfg(unix)]
+                    {
+                        start_local_streamlocal_forward(handle, bind, target, self.timeouts).await
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        Err(Error::unsupported(
+                            "local streamlocal forwarding is not supported on this platform",
+                        ))
+                    }
                 }
                 ForwardDirection::Remote => {
                     start_remote_streamlocal_forward(
@@ -466,6 +477,7 @@ async fn start_remote_forward(
 
 // ── Local streamlocal forwarding ──────────────────────────────────────
 
+#[cfg(unix)]
 async fn start_local_streamlocal_forward(
     handle: Arc<Mutex<russh::client::Handle<ClientHandler>>>,
     bind: &StreamLocalSpec,
@@ -512,6 +524,7 @@ async fn start_local_streamlocal_forward(
     })
 }
 
+#[cfg(unix)]
 async fn run_local_streamlocal_accept_loop(
     listener: UnixListener,
     handle: Arc<Mutex<russh::client::Handle<ClientHandler>>>,
@@ -550,6 +563,7 @@ async fn run_local_streamlocal_accept_loop(
     tracing::debug!("local streamlocal forwarding listener stopped");
 }
 
+#[cfg(unix)]
 async fn forward_direct_streamlocal_connection(
     handle: Arc<Mutex<russh::client::Handle<ClientHandler>>>,
     target_path: &Path,
@@ -980,6 +994,7 @@ pub(crate) async fn copy_bidirectional(
 }
 
 /// Copies data bidirectionally between a `russh::Channel` and a `UnixStream`.
+#[cfg(unix)]
 pub(crate) async fn copy_bidirectional_unix(
     channel: russh::Channel<russh::client::Msg>,
     unix: UnixStream,
@@ -1035,6 +1050,7 @@ pub(crate) async fn copy_bidirectional_with_addr(
 }
 
 /// Copies data bidirectionally between a `russh::Channel` and a Unix domain socket target.
+#[cfg(unix)]
 pub(crate) async fn copy_bidirectional_with_unix_path(
     channel: russh::Channel<russh::client::Msg>,
     path: &Path,

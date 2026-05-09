@@ -1049,13 +1049,15 @@ Use `0.x` while the API is still evolving.
 
 Current status (May 2026): All milestones 0–8 are complete. The crate supports:
 client, server, auth, known_hosts, command execution, shell, PTY, subsystems,
-local/remote forwarding, and SFTP (client + server handler). ~190 tests pass.
+X11 forwarding, agent forwarding tunnel, OpenSSH certificate authentication,
+auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
+(client + server handler). 200 tests pass. Ready for 0.1.0 crates.io publishing.
 
 Suggested roadmap:
 
 - `0.1.x`: Initial publishable release with complete feature set
-- `0.2.x`: API hardening, more integration tests, performance tuning
-- `0.3.x`: AsyncRead/AsyncWrite for shell, SftpMetadata public constructor, batch readdir
+- `0.2.x`: Hashed known_hosts matching, wildcard matching, dynamic SOCKS forwarding, SFTP v4+
+- `0.3.x`: API hardening, more integration tests, performance tuning
 - `1.0.0`: Stable public API, complete core docs, security-reviewed defaults, production-ready release
 
 Do not rush to `1.0.0`.

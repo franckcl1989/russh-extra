@@ -44,6 +44,56 @@ fn build_terminal_modes(pty: &Pty) -> Vec<(russh::Pty, u32)> {
         .collect()
 }
 
+/// X11 forwarding parameters.
+#[derive(Clone, Debug)]
+pub struct X11Params {
+    /// Whether the server should accept a single X11 connection.
+    pub single_connection: bool,
+    /// The X11 authentication protocol (e.g. "MIT-MAGIC-COOKIE-1").
+    pub protocol: String,
+    /// The X11 authentication cookie (128-bit hex string).
+    pub cookie: String,
+    /// The X11 screen number.
+    pub screen: u32,
+}
+
+impl X11Params {
+    /// Creates X11 parameters with an auto-generated MIT-MAGIC-COOKIE-1 cookie.
+    pub fn new(screen: u32) -> Self {
+        use rand::Rng;
+        let mut cookie_bytes = [0u8; 16];
+        rand::rng().fill_bytes(&mut cookie_bytes);
+        let cookie = cookie_bytes
+            .iter()
+            .fold(String::with_capacity(32), |mut s, b| {
+                use std::fmt::Write;
+                let _ = write!(s, "{b:02x}");
+                s
+            });
+
+        Self {
+            single_connection: false,
+            protocol: "MIT-MAGIC-COOKIE-1".to_owned(),
+            cookie,
+            screen,
+        }
+    }
+
+    /// Creates X11 parameters with a user-supplied protocol and cookie.
+    pub fn with_cookie(
+        protocol: impl Into<String>,
+        cookie: impl Into<String>,
+        screen: u32,
+    ) -> Self {
+        Self {
+            single_connection: false,
+            protocol: protocol.into(),
+            cookie: cookie.into(),
+            screen,
+        }
+    }
+}
+
 /// Interactive shell handle.
 ///
 /// Created by [`Shell::open`]. Provides streaming I/O, resize, signal,
@@ -225,6 +275,8 @@ pub struct Shell {
     pty: Option<Pty>,
     env: Vec<(String, String)>,
     timeouts: Timeouts,
+    x11_params: Option<X11Params>,
+    want_agent_forward: bool,
 }
 
 impl fmt::Debug for Shell {
@@ -234,6 +286,8 @@ impl fmt::Debug for Shell {
             .field("pty", &self.pty)
             .field("env_count", &self.env.len())
             .field("timeouts", &self.timeouts)
+            .field("x11_params", &self.x11_params)
+            .field("agent_forward", &self.want_agent_forward)
             .finish()
     }
 }
@@ -252,7 +306,8 @@ impl Shell {
     /// Opens the interactive shell.
     ///
     /// Opens a session channel, requests PTY and environment variables
-    /// (if configured), and starts the remote shell. Returns a streaming
+    /// (if configured), optionally requests X11 forwarding and agent
+    /// forwarding, and starts the remote shell. Returns a streaming
     /// [`ShellHandle`] on success.
     pub async fn open(self) -> Result<ShellHandle> {
         let handle = self
@@ -302,6 +357,26 @@ impl Shell {
             }
         }
 
+        if let Some(ref x11) = self.x11_params {
+            channel
+                .request_x11(
+                    false,
+                    x11.single_connection,
+                    x11.protocol.as_str(),
+                    x11.cookie.as_str(),
+                    x11.screen,
+                )
+                .await
+                .map_err(map_shell_error)?;
+        }
+
+        if self.want_agent_forward {
+            channel
+                .agent_forward(false)
+                .await
+                .map_err(map_shell_error)?;
+        }
+
         channel.request_shell(true).await.map_err(map_shell_error)?;
 
         match channel.wait().await {
@@ -334,6 +409,8 @@ pub struct ShellBuilder {
     pty: Option<Pty>,
     env: Vec<(String, String)>,
     timeouts: Timeouts,
+    x11_params: Option<X11Params>,
+    want_agent_forward: bool,
 }
 
 impl fmt::Debug for ShellBuilder {
@@ -343,6 +420,8 @@ impl fmt::Debug for ShellBuilder {
             .field("pty", &self.pty)
             .field("env_count", &self.env.len())
             .field("timeouts", &self.timeouts)
+            .field("x11_params", &self.x11_params)
+            .field("agent_forward", &self.want_agent_forward)
             .finish()
     }
 }
@@ -360,6 +439,8 @@ impl ShellBuilder {
             pty: None,
             env: Vec::new(),
             timeouts,
+            x11_params: None,
+            want_agent_forward: false,
         }
     }
 
@@ -378,6 +459,38 @@ impl ShellBuilder {
         self
     }
 
+    /// Enables X11 forwarding.
+    ///
+    /// Generates a random MIT-MAGIC-COOKIE-1 cookie for the given screen
+    /// number.
+    pub fn x11(mut self, screen: u32) -> Self {
+        self.x11_params = Some(X11Params::new(screen));
+        self
+    }
+
+    /// Enables X11 forwarding with a custom authentication protocol and cookie.
+    pub fn x11_with_cookie(
+        mut self,
+        protocol: impl Into<String>,
+        cookie: impl Into<String>,
+        screen: u32,
+    ) -> Self {
+        self.x11_params = Some(X11Params::with_cookie(protocol, cookie, screen));
+        self
+    }
+
+    /// Provides explicit X11 forwarding parameters.
+    pub fn x11_params(mut self, params: X11Params) -> Self {
+        self.x11_params = Some(params);
+        self
+    }
+
+    /// Requests SSH agent forwarding (`auth-agent-req@openssh.com`).
+    pub fn agent_forward(mut self) -> Self {
+        self.want_agent_forward = true;
+        self
+    }
+
     /// Builds the [`Shell`] configuration.
     pub fn build(self) -> Shell {
         Shell {
@@ -386,6 +499,8 @@ impl ShellBuilder {
             pty: self.pty,
             env: self.env,
             timeouts: self.timeouts,
+            x11_params: self.x11_params,
+            want_agent_forward: self.want_agent_forward,
         }
     }
 }
@@ -400,6 +515,8 @@ pub struct Subsystem {
     handle: Option<Arc<Mutex<client::Handle<super::ClientHandler>>>>,
     name: String,
     timeouts: Timeouts,
+    x11_params: Option<X11Params>,
+    want_agent_forward: bool,
 }
 
 impl fmt::Debug for Subsystem {
@@ -408,6 +525,8 @@ impl fmt::Debug for Subsystem {
             .field("session_id", &self.session_id)
             .field("name", &self.name)
             .field("timeouts", &self.timeouts)
+            .field("x11_params", &self.x11_params)
+            .field("agent_forward", &self.want_agent_forward)
             .finish()
     }
 }
@@ -440,6 +559,26 @@ impl Subsystem {
         .await
         .map_err(|_| Error::timeout(Operation::ChannelOpen, "session channel open timed out"))?
         .map_err(map_channel_open_error)?;
+
+        if let Some(ref x11) = self.x11_params {
+            channel
+                .request_x11(
+                    false,
+                    x11.single_connection,
+                    x11.protocol.as_str(),
+                    x11.cookie.as_str(),
+                    x11.screen,
+                )
+                .await
+                .map_err(map_shell_error)?;
+        }
+
+        if self.want_agent_forward {
+            channel
+                .agent_forward(false)
+                .await
+                .map_err(map_shell_error)?;
+        }
 
         channel
             .request_subsystem(true, self.name.clone())
@@ -475,6 +614,8 @@ pub struct SubsystemBuilder {
     handle: Option<Arc<Mutex<client::Handle<super::ClientHandler>>>>,
     name: String,
     timeouts: Timeouts,
+    x11_params: Option<X11Params>,
+    want_agent_forward: bool,
 }
 
 impl fmt::Debug for SubsystemBuilder {
@@ -483,6 +624,8 @@ impl fmt::Debug for SubsystemBuilder {
             .field("session_id", &self.session_id)
             .field("name", &self.name)
             .field("timeouts", &self.timeouts)
+            .field("x11_params", &self.x11_params)
+            .field("agent_forward", &self.want_agent_forward)
             .finish()
     }
 }
@@ -500,7 +643,40 @@ impl SubsystemBuilder {
             handle,
             name,
             timeouts,
+            x11_params: None,
+            want_agent_forward: false,
         }
+    }
+
+    /// Enables X11 forwarding.
+    ///
+    /// Generates a random MIT-MAGIC-COOKIE-1 cookie for the given screen number.
+    pub fn x11(mut self, screen: u32) -> Self {
+        self.x11_params = Some(X11Params::new(screen));
+        self
+    }
+
+    /// Enables X11 forwarding with a custom authentication protocol and cookie.
+    pub fn x11_with_cookie(
+        mut self,
+        protocol: impl Into<String>,
+        cookie: impl Into<String>,
+        screen: u32,
+    ) -> Self {
+        self.x11_params = Some(X11Params::with_cookie(protocol, cookie, screen));
+        self
+    }
+
+    /// Provides explicit X11 forwarding parameters.
+    pub fn x11_params(mut self, params: X11Params) -> Self {
+        self.x11_params = Some(params);
+        self
+    }
+
+    /// Requests SSH agent forwarding.
+    pub fn agent_forward(mut self) -> Self {
+        self.want_agent_forward = true;
+        self
     }
 
     /// Builds the [`Subsystem`] configuration.
@@ -510,6 +686,8 @@ impl SubsystemBuilder {
             handle: self.handle,
             name: self.name,
             timeouts: self.timeouts,
+            x11_params: self.x11_params,
+            want_agent_forward: self.want_agent_forward,
         }
     }
 }
@@ -848,5 +1026,49 @@ mod tests {
         assert!(!debug.contains("SECRET"));
         assert!(!debug.contains("value"));
         assert!(debug.contains("env_count"));
+    }
+
+    #[test]
+    fn x11_params_new_generates_32_char_hex_cookie() {
+        let params = X11Params::new(0);
+        assert_eq!(params.protocol, "MIT-MAGIC-COOKIE-1");
+        assert_eq!(params.cookie.len(), 32);
+        assert!(params.cookie.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(params.screen, 0);
+    }
+
+    #[test]
+    fn x11_params_with_cookie_uses_provided_values() {
+        let params = X11Params::with_cookie("XDM-AUTHORIZATION-1", "deadbeef", 1);
+        assert_eq!(params.protocol, "XDM-AUTHORIZATION-1");
+        assert_eq!(params.cookie, "deadbeef");
+        assert_eq!(params.screen, 1);
+    }
+
+    #[test]
+    fn shell_builder_supports_x11_and_agent_forwarding() {
+        let builder = ShellBuilder::from_session(SessionId::next(), None, Timeouts::default())
+            .x11(0)
+            .agent_forward();
+
+        let shell = builder.build();
+        assert!(shell.x11_params.is_some());
+        assert!(shell.want_agent_forward);
+    }
+
+    #[test]
+    fn subsystem_builder_supports_x11_and_agent_forwarding() {
+        let builder = SubsystemBuilder::from_session(
+            SessionId::next(),
+            None,
+            "sftp".into(),
+            Timeouts::default(),
+        )
+        .x11_with_cookie("MIT-MAGIC-COOKIE-1", "abc123", 0)
+        .agent_forward();
+
+        let sub = builder.build();
+        assert!(sub.x11_params.is_some());
+        assert!(sub.want_agent_forward);
     }
 }

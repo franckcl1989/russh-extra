@@ -38,24 +38,28 @@ pub use russh_extra_core::{
 
 #[cfg(feature = "client")]
 pub use client::{
-    Client, ClientBuilder, ClientHandler, CommandOutput, RemoteCommand, RusshHandleGuard, Session,
+    CertificateCredential, Client, ClientBuilder, ClientHandler, CommandOutput, RemoteCommand,
+    RusshHandleGuard, Session,
 };
 #[cfg(feature = "known-hosts")]
 pub use known_hosts::{KnownHostStatus, KnownHosts, KnownHostsEntry, KnownHostsParseWarning};
 #[cfg(feature = "server")]
 pub use server::{
-    AuthContext, AuthDecision, DirectTcpipContext, EnvRequest, ExecCommand, ExecContext,
-    ExecResponse, ForwardedTcpipContext, KeyboardInteractiveContext, KeyboardInteractivePrompt,
-    KeyboardInteractivePromptItem, KeyboardInteractiveResponse, PtyContext, PtyParams, Server,
-    ServerBuilder, ServerEvent, ServerHandle, ServerHandler, ServerHostKey, SessionContext,
-    ShellContext, StreamingExecCmd, StreamingExecContext, SubsystemContext, TcpipForwardContext,
-    WindowChange,
+    AgentRequestContext, AuthContext, AuthDecision, DirectStreamLocalContext, DirectTcpipContext,
+    EnvRequest, ExecCommand, ExecContext, ExecResponse, ForwardedTcpipContext,
+    KeyboardInteractiveContext, KeyboardInteractivePrompt, KeyboardInteractivePromptItem,
+    KeyboardInteractiveResponse, PtyContext, PtyParams, Server, ServerBuilder, ServerEvent,
+    ServerHandle, ServerHandler, ServerHostKey, SessionContext, ShellContext,
+    StreamLocalForwardContext, StreamingExecCmd, StreamingExecContext, SubsystemContext,
+    TcpipForwardContext, WindowChange, X11ChannelContext, X11RequestContext,
 };
 #[cfg(all(feature = "sftp", feature = "server"))]
 pub use sftp::SftpServerHandler;
 #[cfg(feature = "sftp")]
 pub use sftp::{SftpClient, SftpDir, SftpDirEntry, SftpFile, SftpMetadata, SftpOpenMode};
 #[cfg(feature = "shell")]
-pub use shell::{Shell, ShellAsyncIo, ShellBuilder, ShellHandle, Subsystem, SubsystemBuilder};
+pub use shell::{
+    Shell, ShellAsyncIo, ShellBuilder, ShellHandle, Subsystem, SubsystemBuilder, X11Params,
+};
 #[cfg(feature = "tunnel")]
 pub use tunnel::{DirectStreamLocalBuilder, DirectTcpBuilder, Tunnel, TunnelBuilder, TunnelStream};

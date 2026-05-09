@@ -48,6 +48,12 @@ type DirectStreamLocalCallback =
 type ConnectCallback = Arc<dyn Fn(SessionContext) -> BoxFutureResult<()> + Send + Sync>;
 type DisconnectCallback = Arc<dyn Fn(SessionId) -> BoxFutureResult<()> + Send + Sync>;
 type AuthSuccessCallback = Arc<dyn Fn(SessionContext) -> BoxFutureResult<()> + Send + Sync>;
+type CertAuthCallback =
+    Arc<dyn Fn(AuthContext, Certificate) -> BoxFutureResult<AuthDecision> + Send + Sync>;
+type X11RequestCallback = Arc<dyn Fn(X11RequestContext) -> BoxFutureResult<bool> + Send + Sync>;
+type X11ChannelCallback = Arc<dyn Fn(X11ChannelContext) -> BoxFutureResult<bool> + Send + Sync>;
+type AgentRequestCallback = Arc<dyn Fn(AgentRequestContext) -> BoxFutureResult<bool> + Send + Sync>;
+type AuthBannerCallback = Arc<dyn Fn() -> BoxFutureResult<Option<String>> + Send + Sync>;
 type StreamingExecCallback = Arc<dyn Fn(StreamingExecContext) -> BoxFutureResult<()> + Send + Sync>;
 type KeyboardInteractiveCallback = Arc<
     dyn Fn(KeyboardInteractiveContext) -> BoxFutureResult<KeyboardInteractiveResponse>
@@ -184,6 +190,11 @@ pub struct ServerBuilder {
     on_connect: Option<ConnectCallback>,
     on_disconnect: Option<DisconnectCallback>,
     on_auth_success: Option<AuthSuccessCallback>,
+    cert_auth: Option<CertAuthCallback>,
+    x11_request_handler: Option<X11RequestCallback>,
+    x11_channel_handler: Option<X11ChannelCallback>,
+    agent_request_handler: Option<AgentRequestCallback>,
+    auth_banner: Option<AuthBannerCallback>,
     #[cfg(feature = "sftp")]
     sftp_handler: Option<std::sync::Arc<dyn crate::sftp::SftpServerHandler + Send + Sync>>,
 }
@@ -419,10 +430,40 @@ impl ServerBuilder {
             Box::pin(async move { disconnect_handler.on_disconnect(id).await })
         }));
 
-        let auth_success_handler = Arc::new(handler);
+        let auth_success_handler = Arc::new(handler.clone());
         self.on_auth_success = Some(Arc::new(move |ctx| {
             let auth_success_handler = Arc::clone(&auth_success_handler);
             Box::pin(async move { auth_success_handler.on_auth_success(ctx).await })
+        }));
+
+        let cert_handler = Arc::new(handler.clone());
+        self.cert_auth = Some(Arc::new(move |ctx, cert| {
+            let cert_handler = Arc::clone(&cert_handler);
+            Box::pin(async move { cert_handler.auth_openssh_certificate(ctx, cert).await })
+        }));
+
+        let x11_req_handler = Arc::new(handler.clone());
+        self.x11_request_handler = Some(Arc::new(move |ctx| {
+            let x11_req_handler = Arc::clone(&x11_req_handler);
+            Box::pin(async move { x11_req_handler.x11_request(ctx).await })
+        }));
+
+        let x11_ch_handler = Arc::new(handler.clone());
+        self.x11_channel_handler = Some(Arc::new(move |ctx| {
+            let x11_ch_handler = Arc::clone(&x11_ch_handler);
+            Box::pin(async move { x11_ch_handler.channel_open_x11(ctx).await })
+        }));
+
+        let agent_req_handler = Arc::new(handler.clone());
+        self.agent_request_handler = Some(Arc::new(move |ctx| {
+            let agent_req_handler = Arc::clone(&agent_req_handler);
+            Box::pin(async move { agent_req_handler.agent_request(ctx).await })
+        }));
+
+        let banner_handler = Arc::new(handler);
+        self.auth_banner = Some(Arc::new(move || {
+            let handler = Arc::clone(&banner_handler);
+            Box::pin(async move { handler.authentication_banner().await })
         }));
 
         self
@@ -605,6 +646,69 @@ impl ServerBuilder {
         self
     }
 
+    /// Registers an OpenSSH certificate authentication handler.
+    pub fn certificate_auth<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(AuthContext, Certificate) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<AuthDecision>> + Send + 'static,
+    {
+        self.cert_auth = Some(Arc::new(move |ctx, cert| Box::pin(handler(ctx, cert))));
+        self
+    }
+
+    /// Registers an X11 request handler.
+    ///
+    /// Called when a client requests X11 forwarding on an existing channel.
+    /// Return `true` to accept the forwarding, `false` to reject.
+    pub fn x11_request_handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(X11RequestContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<bool>> + Send + 'static,
+    {
+        self.x11_request_handler = Some(Arc::new(move |ctx| Box::pin(handler(ctx))));
+        self
+    }
+
+    /// Registers an X11 channel open handler.
+    ///
+    /// Called when a client opens an X11 forwarding channel. Return `true`
+    /// to accept the channel, `false` to reject.
+    pub fn x11_channel_handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(X11ChannelContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<bool>> + Send + 'static,
+    {
+        self.x11_channel_handler = Some(Arc::new(move |ctx| Box::pin(handler(ctx))));
+        self
+    }
+
+    /// Registers an agent forwarding request handler.
+    ///
+    /// Called when a client requests agent forwarding. Return `true` to
+    /// accept, `false` to reject.
+    pub fn agent_request_handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(AgentRequestContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<bool>> + Send + 'static,
+    {
+        self.agent_request_handler = Some(Arc::new(move |ctx| Box::pin(handler(ctx))));
+        self
+    }
+
+    /// Configures an authentication banner.
+    ///
+    /// The banner is a message sent to the client during the authentication
+    /// phase, typically a warning or legal notice. Return `None` to send
+    /// no banner.
+    pub fn banner<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<Option<String>>> + Send + 'static,
+    {
+        self.auth_banner = Some(Arc::new(move || Box::pin(handler())));
+        self
+    }
+
     /// Builds the server.
     pub fn build(self) -> Result<Server> {
         if self.config.max_sessions() == 0 {
@@ -655,6 +759,11 @@ impl ServerBuilder {
             on_connect: self.on_connect,
             on_disconnect: self.on_disconnect,
             on_auth_success: self.on_auth_success,
+            cert_auth: self.cert_auth,
+            x11_request_handler: self.x11_request_handler,
+            x11_channel_handler: self.x11_channel_handler,
+            agent_request_handler: self.agent_request_handler,
+            auth_banner: self.auth_banner,
             #[cfg(feature = "sftp")]
             sftp_handler: self.sftp_handler,
         });
@@ -722,6 +831,11 @@ impl Default for ServerBuilder {
             on_connect: None,
             on_disconnect: None,
             on_auth_success: None,
+            cert_auth: None,
+            x11_request_handler: None,
+            x11_channel_handler: None,
+            agent_request_handler: None,
+            auth_banner: None,
             #[cfg(feature = "sftp")]
             sftp_handler: None,
         }
@@ -1411,6 +1525,53 @@ pub struct DirectStreamLocalContext {
     pub server: ServerHandle,
 }
 
+/// Context for an X11 forwarding channel request.
+#[derive(Clone, Debug)]
+pub struct X11RequestContext {
+    /// Session identifier.
+    pub session_id: SessionId,
+    /// Authenticated username.
+    pub username: Username,
+    /// Channel identifier.
+    pub channel: ChannelId,
+    /// Whether the server should accept a single X11 connection.
+    pub single_connection: bool,
+    /// The X11 authentication protocol.
+    pub auth_protocol: String,
+    /// The X11 authentication cookie.
+    pub auth_cookie: String,
+    /// The X11 screen number.
+    pub screen_number: u32,
+    /// Server handle for lifecycle operations.
+    pub server: ServerHandle,
+}
+
+/// Context for an X11 channel open request.
+#[derive(Clone, Debug)]
+pub struct X11ChannelContext {
+    /// Session identifier.
+    pub session_id: SessionId,
+    /// Authenticated username.
+    pub username: Username,
+    /// Originator address.
+    pub originator_address: String,
+    /// Originator port.
+    pub originator_port: u32,
+    /// Server handle for lifecycle operations.
+    pub server: ServerHandle,
+}
+
+/// Context for an agent forwarding request.
+#[derive(Clone, Debug)]
+pub struct AgentRequestContext {
+    /// Session identifier.
+    pub session_id: SessionId,
+    /// Channel identifier.
+    pub channel: ChannelId,
+    /// Server handle for lifecycle operations.
+    pub server: ServerHandle,
+}
+
 /// Stateful high-level server handler.
 pub trait ServerHandler: Clone + Send + Sync + 'static {
     /// Called when a client TCP connection is accepted.
@@ -1578,6 +1739,44 @@ pub trait ServerHandler: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<bool>> + Send {
         async { Ok(false) }
     }
+
+    /// Handles OpenSSH certificate authentication.
+    fn auth_openssh_certificate(
+        &self,
+        _ctx: AuthContext,
+        _certificate: Certificate,
+    ) -> impl Future<Output = Result<AuthDecision>> + Send {
+        async { Ok(AuthDecision::reject()) }
+    }
+
+    /// Handles an X11 forwarding request on an existing channel.
+    fn x11_request(&self, _ctx: X11RequestContext) -> impl Future<Output = Result<bool>> + Send {
+        async { Ok(false) }
+    }
+
+    /// Handles an X11 channel open request.
+    fn channel_open_x11(
+        &self,
+        _ctx: X11ChannelContext,
+    ) -> impl Future<Output = Result<bool>> + Send {
+        async { Ok(false) }
+    }
+
+    /// Handles an agent forwarding request.
+    fn agent_request(
+        &self,
+        _ctx: AgentRequestContext,
+    ) -> impl Future<Output = Result<bool>> + Send {
+        async { Ok(false) }
+    }
+
+    /// Returns an authentication banner to display to connecting clients.
+    ///
+    /// Return `None` to send no banner. The banner is sent before
+    /// authentication begins and is typically a warning or legal notice.
+    fn authentication_banner(&self) -> impl Future<Output = Result<Option<String>>> + Send {
+        async { Ok(None) }
+    }
 }
 
 /// Session metadata passed to server handlers.
@@ -1649,6 +1848,11 @@ struct ServerRuntime {
     on_connect: Option<ConnectCallback>,
     on_disconnect: Option<DisconnectCallback>,
     on_auth_success: Option<AuthSuccessCallback>,
+    cert_auth: Option<CertAuthCallback>,
+    x11_request_handler: Option<X11RequestCallback>,
+    x11_channel_handler: Option<X11ChannelCallback>,
+    agent_request_handler: Option<AgentRequestCallback>,
+    auth_banner: Option<AuthBannerCallback>,
     #[cfg(feature = "sftp")]
     sftp_handler: Option<std::sync::Arc<dyn crate::sftp::SftpServerHandler + Send + Sync>>,
 }
@@ -1995,10 +2199,24 @@ impl server::Handler for HighLevelRusshHandler {
 
     async fn auth_openssh_certificate(
         &mut self,
-        _user: &str,
-        _certificate: &Certificate,
+        user: &str,
+        certificate: &Certificate,
     ) -> std::result::Result<Auth, Self::Error> {
-        Ok(Auth::reject())
+        let Some(handler) = self.runtime.cert_auth.as_ref() else {
+            return Ok(Auth::reject());
+        };
+
+        let decision = handler(self.auth_context(user), certificate.clone())
+            .await
+            .map_err(ServerRuntimeError::HighLevel)?;
+
+        if decision.is_accepted() {
+            self.username = Some(Username::from(user));
+            self.fire_auth_success();
+            Ok(Auth::Accept)
+        } else {
+            Ok(Auth::reject())
+        }
     }
 
     async fn auth_keyboard_interactive<'a>(
@@ -2343,8 +2561,125 @@ impl server::Handler for HighLevelRusshHandler {
         channel: ChannelId,
         session: &mut server::Session,
     ) -> std::result::Result<bool, Self::Error> {
-        session.channel_failure(channel)?;
-        Ok(false)
+        let Some(handler) = self.runtime.agent_request_handler.as_ref() else {
+            session.channel_failure(channel)?;
+            return Ok(false);
+        };
+
+        let ctx = AgentRequestContext {
+            session_id: self.session_id,
+            channel,
+            server: self.runtime.handle.clone(),
+        };
+
+        match handler(ctx).await {
+            Ok(true) => {
+                session.channel_success(channel)?;
+                Ok(true)
+            }
+            Ok(false) => {
+                session.channel_failure(channel)?;
+                Ok(false)
+            }
+            Err(error) => {
+                session.channel_failure(channel)?;
+                Err(ServerRuntimeError::HighLevel(error))
+            }
+        }
+    }
+
+    async fn x11_request(
+        &mut self,
+        channel: ChannelId,
+        single_connection: bool,
+        x11_auth_protocol: &str,
+        x11_auth_cookie: &str,
+        x11_screen_number: u32,
+        session: &mut server::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let Some(handler) = self.runtime.x11_request_handler.as_ref() else {
+            session.channel_failure(channel)?;
+            return Ok(());
+        };
+
+        let username = match &self.username {
+            Some(u) => u.clone(),
+            None => {
+                session.channel_failure(channel)?;
+                return Ok(());
+            }
+        };
+
+        let ctx = X11RequestContext {
+            session_id: self.session_id,
+            username,
+            channel,
+            single_connection,
+            auth_protocol: x11_auth_protocol.to_owned(),
+            auth_cookie: x11_auth_cookie.to_owned(),
+            screen_number: x11_screen_number,
+            server: self.runtime.handle.clone(),
+        };
+
+        match handler(ctx).await {
+            Ok(true) => session.channel_success(channel)?,
+            Ok(false) => session.channel_failure(channel)?,
+            Err(error) => {
+                session.channel_failure(channel)?;
+                return Err(ServerRuntimeError::HighLevel(error));
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn channel_open_x11(
+        &mut self,
+        channel: russh::Channel<russh::server::Msg>,
+        originator_address: &str,
+        originator_port: u32,
+        _session: &mut server::Session,
+    ) -> std::result::Result<bool, Self::Error> {
+        let Some(handler) = self.runtime.x11_channel_handler.as_ref() else {
+            let _ = channel.close().await;
+            return Ok(false);
+        };
+
+        let username = match &self.username {
+            Some(u) => u.clone(),
+            None => {
+                let _ = channel.close().await;
+                return Ok(false);
+            }
+        };
+
+        let ctx = X11ChannelContext {
+            session_id: self.session_id,
+            username,
+            originator_address: originator_address.to_owned(),
+            originator_port,
+            server: self.runtime.handle.clone(),
+        };
+
+        match handler(ctx).await {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                let _ = channel.close().await;
+                Ok(false)
+            }
+            Err(e) => {
+                let _ = channel.close().await;
+                Err(ServerRuntimeError::HighLevel(e))
+            }
+        }
+    }
+
+    async fn authentication_banner(&mut self) -> std::result::Result<Option<String>, Self::Error> {
+        let Some(handler) = self.runtime.auth_banner.as_ref() else {
+            return Ok(None);
+        };
+
+        handler().await.map_err(ServerRuntimeError::HighLevel)
     }
 
     async fn tcpip_forward(

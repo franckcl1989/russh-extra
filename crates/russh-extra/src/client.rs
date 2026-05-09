@@ -2,12 +2,13 @@
 
 use std::fmt;
 use std::ops::{Deref, DerefMut};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bytes::Bytes;
 use russh::ChannelMsg;
 use russh::client::{self, AuthResult};
-use russh::keys::{HashAlg, ssh_key::PublicKey};
+use russh::keys::{Certificate, HashAlg, PrivateKey, ssh_key::PublicKey};
 use russh_extra_core::{
     AuthenticationErrorKind, ChannelErrorKind, ClientConfig, ClientKeyboardInteractiveInfo,
     ClientKeyboardInteractivePrompt, CommandExit, CommandLimits, Credential, Endpoint, Error,
@@ -19,6 +20,156 @@ use tokio::time;
 
 #[cfg(feature = "known-hosts")]
 use crate::known_hosts::{KnownHostStatus, KnownHosts};
+
+/// OpenSSH certificate credential for authentication.
+///
+/// An OpenSSH certificate is a private key paired with a certificate
+/// signed by a certificate authority. Both the private key and the
+/// certificate must be provided.
+///
+/// # Loading from files
+///
+/// ```no_run
+/// # use russh_extra::CertificateCredential;
+/// let cert = CertificateCredential::from_openssh_files(
+///     "~/.ssh/id_ed25519",
+///     "~/.ssh/id_ed25519-cert.pub",
+/// ).unwrap();
+/// ```
+///
+/// # From in-memory data
+///
+/// ```no_run
+/// # use russh_extra::CertificateCredential;
+/// let cert = CertificateCredential::from_openssh_data(
+///     b"-----BEGIN OPENSSH PRIVATE KEY-----...",
+///     b"ssh-ed25519-cert-v01@openssh.com AAAA...",
+/// ).unwrap();
+/// ```
+#[derive(Clone)]
+pub struct CertificateCredential {
+    key: Arc<PrivateKey>,
+    cert: Certificate,
+    passphrase: Option<Password>,
+}
+
+impl fmt::Debug for CertificateCredential {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CertificateCredential")
+            .field("key", &"***")
+            .field("cert", &"***")
+            .field("has_passphrase", &self.passphrase.is_some())
+            .finish()
+    }
+}
+
+impl CertificateCredential {
+    /// Loads an OpenSSH certificate credential from private key and
+    /// certificate files.
+    ///
+    /// On Unix, the private key file must not be accessible by group or others.
+    pub fn from_openssh_files(
+        key_path: impl AsRef<std::path::Path>,
+        cert_path: impl AsRef<std::path::Path>,
+    ) -> Result<Self> {
+        let key_path = key_path.as_ref();
+        let cert_path = cert_path.as_ref();
+
+        let key_path = expand_tilde_path(key_path);
+        let cert_path = expand_tilde_path(cert_path);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let metadata = std::fs::metadata(&key_path)?;
+            let mode = metadata.permissions().mode();
+            if mode & 0o077 != 0 {
+                return Err(Error::invalid_config(format!(
+                    "private key file `{}` must not be accessible by group or others",
+                    key_path.display()
+                )));
+            }
+        }
+
+        let key = russh::keys::load_secret_key(&key_path, None).map_err(|source| {
+            Error::authentication_with_source(
+                AuthenticationErrorKind::Unavailable,
+                format!("failed to load private key from `{}`", key_path.display()),
+                source,
+            )
+        })?;
+
+        let cert = russh::keys::load_openssh_certificate(&cert_path).map_err(|source| {
+            Error::authentication_with_source(
+                AuthenticationErrorKind::Unavailable,
+                format!("failed to load certificate from `{}`", cert_path.display()),
+                source,
+            )
+        })?;
+
+        Ok(Self {
+            key: Arc::new(key),
+            cert,
+            passphrase: None,
+        })
+    }
+
+    /// Creates a certificate credential from in-memory data.
+    pub fn from_openssh_data(
+        key_data: impl AsRef<[u8]>,
+        cert_data: impl AsRef<[u8]>,
+    ) -> Result<Self> {
+        let key = PrivateKey::from_openssh(key_data).map_err(|source| {
+            Error::authentication_with_source(
+                AuthenticationErrorKind::Unavailable,
+                "failed to parse in-memory private key",
+                source,
+            )
+        })?;
+
+        let cert_data = cert_data.as_ref();
+        let cert_str = std::str::from_utf8(cert_data).map_err(|_| {
+            Error::authentication_kind(
+                AuthenticationErrorKind::Unavailable,
+                "certificate data is not valid UTF-8",
+            )
+        })?;
+
+        let cert = Certificate::from_openssh(cert_str).map_err(|source| {
+            Error::authentication_with_source(
+                AuthenticationErrorKind::Unavailable,
+                "failed to parse in-memory certificate",
+                source,
+            )
+        })?;
+
+        Ok(Self {
+            key: Arc::new(key),
+            cert,
+            passphrase: None,
+        })
+    }
+
+    /// Adds a passphrase for the encrypted private key.
+    pub fn with_passphrase(mut self, passphrase: impl Into<Password>) -> Self {
+        self.passphrase = Some(passphrase.into());
+        self
+    }
+}
+
+fn expand_tilde_path(path: &std::path::Path) -> PathBuf {
+    if let Some(path_str) = path.to_str()
+        && (path_str == "~" || path_str.starts_with("~/"))
+        && let Ok(home) = std::env::var("HOME")
+    {
+        if path_str == "~" {
+            return PathBuf::from(home);
+        }
+        return PathBuf::from(home).join(&path_str[2..]);
+    }
+
+    path.to_path_buf()
+}
 
 /// High-level SSH client.
 #[derive(Clone)]
@@ -32,12 +183,16 @@ pub struct Client {
     remote_forwards: crate::tunnel::RemoteForwardMap,
     #[cfg(feature = "tunnel")]
     remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
+    cert_credentials: Vec<CertificateCredential>,
+    x11_display: Option<PathBuf>,
 }
 
 impl fmt::Debug for Client {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Client")
             .field("config", &self.config)
+            .field("x11_display", &self.x11_display)
+            .field("cert_count", &self.cert_credentials.len())
             .finish()
     }
 }
@@ -60,6 +215,8 @@ impl Client {
             remote_forwards: crate::tunnel::RemoteForwardMap::default(),
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap::default(),
+            cert_credentials: Vec::new(),
+            x11_display: None,
         }
     }
 
@@ -87,6 +244,8 @@ impl Client {
             self.remote_forwards.clone(),
             #[cfg(feature = "tunnel")]
             self.remote_streamlocal_forwards.clone(),
+            self.x11_display.clone(),
+            self.cert_credentials.clone(),
         );
 
         let mut handle = time::timeout(
@@ -97,7 +256,8 @@ impl Client {
         .map_err(|_| Error::timeout(Operation::Connect, "client connection timed out"))?
         .map_err(map_connect_error)?;
 
-        authenticate_configured(&mut handle, &self.config).await?;
+        let auth_banner =
+            authenticate_configured(&mut handle, &self.config, &self.cert_credentials).await?;
 
         Ok(Session {
             id: SessionId::next(),
@@ -108,6 +268,7 @@ impl Client {
             remote_forwards: self.remote_forwards.clone(),
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards: self.remote_streamlocal_forwards.clone(),
+            auth_banner_text: auth_banner,
         })
     }
 }
@@ -123,6 +284,8 @@ pub struct ClientBuilder {
     remote_forwards: crate::tunnel::RemoteForwardMap,
     #[cfg(feature = "tunnel")]
     remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
+    cert_credentials: Vec<CertificateCredential>,
+    x11_display: Option<PathBuf>,
 }
 
 impl Default for ClientBuilder {
@@ -138,6 +301,8 @@ impl Default for ClientBuilder {
             remote_forwards: crate::tunnel::RemoteForwardMap::default(),
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap::default(),
+            cert_credentials: Vec::new(),
+            x11_display: None,
         }
     }
 }
@@ -268,6 +433,22 @@ impl ClientBuilder {
         self
     }
 
+    /// Adds an OpenSSH certificate credential for authentication.
+    pub fn certificate(mut self, cert: CertificateCredential) -> Self {
+        self.cert_credentials.push(cert);
+        self
+    }
+
+    /// Sets the X11 display to forward to.
+    ///
+    /// When set, incoming X11 channels from the server will be forwarded
+    /// to this display. The display may be a Unix socket path (e.g.
+    /// `"/tmp/.X11-unix/X0"`) or a TCP address (e.g. `"localhost:6000"`).
+    pub fn x11_display(mut self, display: impl Into<PathBuf>) -> Self {
+        self.x11_display = Some(display.into());
+        self
+    }
+
     /// Builds the client.
     pub fn build(self) -> Client {
         Client {
@@ -280,6 +461,8 @@ impl ClientBuilder {
             remote_forwards: self.remote_forwards,
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards: self.remote_streamlocal_forwards,
+            cert_credentials: self.cert_credentials,
+            x11_display: self.x11_display,
         }
     }
 }
@@ -300,17 +483,23 @@ pub struct ClientHandler {
     remote_forwards: crate::tunnel::RemoteForwardMap,
     #[cfg(feature = "tunnel")]
     remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
+    x11_display: Option<PathBuf>,
+    auth_banner_text: Arc<Mutex<Option<String>>>,
+    cert_credentials: Vec<CertificateCredential>,
 }
 
 impl fmt::Debug for ClientHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ClientHandler")
             .field("host_key_policy", &self.host_key_policy)
+            .field("x11_display", &self.x11_display)
+            .field("cert_count", &self.cert_credentials.len())
             .finish()
     }
 }
 
 impl ClientHandler {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         host_key_policy: HostKeyPolicy,
         #[cfg(feature = "known-hosts")] known_hosts: Option<KnownHosts>,
@@ -320,6 +509,8 @@ impl ClientHandler {
         #[cfg(feature = "tunnel")] remote_forwards: crate::tunnel::RemoteForwardMap,
         #[cfg(feature = "tunnel")]
         remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
+        x11_display: Option<PathBuf>,
+        cert_credentials: Vec<CertificateCredential>,
     ) -> Self {
         Self {
             host_key_policy,
@@ -335,6 +526,9 @@ impl ClientHandler {
             remote_forwards,
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards,
+            x11_display,
+            auth_banner_text: Arc::new(Mutex::new(None)),
+            cert_credentials,
         }
     }
 
@@ -434,14 +628,27 @@ impl client::Handler for ClientHandler {
         };
         match target {
             Some(target_path) => {
-                tracing::debug!(
-                    remote_path = %socket_path,
-                    local_target = %target_path.display(),
-                    "accepted forwarded streamlocal channel",
-                );
-                tokio::task::spawn(async move {
-                    crate::tunnel::copy_bidirectional_with_unix_path(channel, &target_path).await;
-                });
+                #[cfg(unix)]
+                {
+                    tracing::debug!(
+                        remote_path = %socket_path,
+                        local_target = %target_path.display(),
+                        "accepted forwarded streamlocal channel",
+                    );
+                    tokio::task::spawn(async move {
+                        crate::tunnel::copy_bidirectional_with_unix_path(channel, &target_path)
+                            .await;
+                    });
+                }
+                #[cfg(not(unix))]
+                {
+                    tracing::warn!(
+                        remote_path = %socket_path,
+                        local_target = %target_path.display(),
+                        "cannot accept forwarded streamlocal channel on this platform",
+                    );
+                    let _ = channel.close().await;
+                }
             }
             None => {
                 tracing::warn!(
@@ -466,6 +673,107 @@ impl client::Handler for ClientHandler {
     ) -> std::result::Result<(), Self::Error> {
         let _ = channel.close().await;
         Ok(())
+    }
+
+    async fn auth_banner(
+        &mut self,
+        banner: &str,
+        _session: &mut russh::client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        *self.auth_banner_text.lock().await = Some(banner.to_owned());
+        Ok(())
+    }
+
+    async fn server_channel_open_x11(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        _session: &mut russh::client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        match &self.x11_display {
+            Some(display_path) => {
+                let path = display_path.clone();
+                tokio::spawn(async move {
+                    forward_x11_channel(channel, path).await;
+                });
+            }
+            None => {
+                let _ = channel.close().await;
+            }
+        }
+        Ok(())
+    }
+
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        _session: &mut russh::client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        #[cfg(unix)]
+        {
+            if let Ok(socket_path) = std::env::var("SSH_AUTH_SOCK") {
+                tokio::spawn(async move {
+                    match tokio::net::UnixStream::connect(&socket_path).await {
+                        Ok(unix_stream) => {
+                            crate::tunnel::copy_bidirectional_unix(channel, unix_stream).await;
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                path = %socket_path,
+                                error = %e,
+                                "failed to connect to SSH agent for forwarded agent channel",
+                            );
+                            let _ = channel.close().await;
+                        }
+                    }
+                });
+                return Ok(());
+            }
+        }
+
+        let _ = channel.close().await;
+        Ok(())
+    }
+}
+
+async fn forward_x11_channel(channel: russh::Channel<russh::client::Msg>, display_path: PathBuf) {
+    #[cfg(unix)]
+    {
+        let path_str = display_path.to_string_lossy().to_string();
+        if path_str.starts_with('/') {
+            match tokio::net::UnixStream::connect(&display_path).await {
+                Ok(unix_stream) => {
+                    crate::tunnel::copy_bidirectional_unix(channel, unix_stream).await;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        path = %path_str,
+                        error = %e,
+                        "failed to connect to X11 display via Unix socket",
+                    );
+                    let _ = channel.close().await;
+                }
+            }
+            return;
+        }
+    }
+
+    {
+        let addr = display_path.to_string_lossy().to_string();
+        match tokio::net::TcpStream::connect(addr.as_str()).await {
+            Ok(tcp_stream) => {
+                crate::tunnel::copy_bidirectional(channel, tcp_stream).await;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    addr = %addr,
+                    error = %e,
+                    "failed to connect to X11 display via TCP",
+                );
+                let _ = channel.close().await;
+            }
+        }
     }
 }
 
@@ -505,6 +813,7 @@ pub struct Session {
     remote_forwards: crate::tunnel::RemoteForwardMap,
     #[cfg(feature = "tunnel")]
     remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
+    auth_banner_text: Arc<Mutex<Option<String>>>,
 }
 
 impl fmt::Debug for Session {
@@ -531,6 +840,7 @@ impl Session {
             remote_forwards: crate::tunnel::RemoteForwardMap::default(),
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap::default(),
+            auth_banner_text: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -753,6 +1063,14 @@ impl Session {
         self.handle.is_some()
     }
 
+    /// Returns the server's authentication banner, if one was sent.
+    ///
+    /// The banner is typically a warning or legal notice sent before
+    /// authentication completes. Returns `None` if no banner was sent.
+    pub async fn auth_banner(&self) -> Option<String> {
+        self.auth_banner_text.lock().await.clone()
+    }
+
     /// Sends a disconnect message and consumes the session.
     ///
     /// Underlying SSH resources are released. The session must not be used
@@ -807,7 +1125,8 @@ fn public_key_algorithm(public_key: &PublicKey) -> &str {
 async fn authenticate_configured(
     handle: &mut client::Handle<ClientHandler>,
     config: &ClientConfig,
-) -> Result<()> {
+    cert_credentials: &[CertificateCredential],
+) -> Result<Arc<Mutex<Option<String>>>> {
     let username = config
         .username()
         .ok_or_else(|| {
@@ -819,7 +1138,9 @@ async fn authenticate_configured(
         .as_str()
         .to_owned();
 
-    if config.credentials().is_empty() {
+    let has_credentials = !config.credentials().is_empty() || !cert_credentials.is_empty();
+
+    if !has_credentials {
         return Err(Error::authentication_kind(
             AuthenticationErrorKind::Unavailable,
             "at least one credential is required for client authentication",
@@ -931,7 +1252,46 @@ async fn authenticate_configured(
         }
 
         if success {
-            return Ok(());
+            return Ok(Arc::new(Mutex::new(None)));
+        }
+    }
+
+    for cert_cred in cert_credentials {
+        let mut key = (*cert_cred.key).clone();
+        if key.is_encrypted()
+            && let Some(ref passphrase) = cert_cred.passphrase
+        {
+            key = key.decrypt(passphrase.expose_secret()).map_err(|source| {
+                Error::authentication_with_source(
+                    AuthenticationErrorKind::Unavailable,
+                    "failed to decrypt certificate private key",
+                    source,
+                )
+            })?;
+        }
+
+        let result = time::timeout(
+            config.timeouts().auth,
+            handle.authenticate_openssh_cert(
+                username.clone(),
+                Arc::new(key),
+                cert_cred.cert.clone(),
+            ),
+        )
+        .await
+        .map_err(|_| {
+            Error::timeout(
+                Operation::Authentication,
+                "certificate authentication timed out",
+            )
+        })?
+        .map_err(map_auth_error)?;
+
+        match result {
+            AuthResult::Success => return Ok(Arc::new(Mutex::new(None))),
+            AuthResult::Failure {
+                partial_success, ..
+            } => saw_partial |= partial_success,
         }
     }
 
@@ -1516,5 +1876,39 @@ mod tests {
     fn session_is_connected_reflects_handle_presence() {
         let session = Session::new(SessionId::next(), Endpoint::ssh("example.com"));
         assert!(!session.is_connected());
+    }
+
+    #[test]
+    fn certificate_credential_debug_redacts_secrets() {
+        let cred = super::CertificateCredential::from_openssh_data(
+            b"-----BEGIN OPENSSH PRIVATE KEY-----\ninvalid\n-----END OPENSSH PRIVATE KEY-----",
+            b"ssh-ed25519-cert-v01@openssh.com AAAinvalid",
+        );
+
+        assert!(cred.is_err());
+    }
+
+    #[test]
+    fn certificate_credential_from_invalid_data_is_err() {
+        let cred = super::CertificateCredential::from_openssh_data(
+            b"not-a-valid-key",
+            b"not-a-valid-cert",
+        );
+        assert!(cred.is_err());
+    }
+
+    #[test]
+    fn client_builder_supports_certificate_and_x11_display() {
+        let client = super::Client::builder()
+            .endpoint(("example.com", 22))
+            .x11_display("/tmp/.X11-unix/X0")
+            .accept_any_host_key()
+            .build();
+
+        assert!(client.x11_display.is_some());
+        assert_eq!(
+            client.x11_display.as_ref().unwrap().to_string_lossy(),
+            "/tmp/.X11-unix/X0"
+        );
     }
 }

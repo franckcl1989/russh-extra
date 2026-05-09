@@ -29,7 +29,7 @@ async fn main() -> russh_extra::Result<()> {
     let session = Client::builder()
         .endpoint(("example.com", 22))
         .username("deploy")
-        .password(std::env::var("SSH_PASSWORD")?)
+        .password(std::env::var("SSH_PASSWORD").unwrap_or_default())
         .try_pinned_host_key_sha256("SHA256:base64-fingerprint")?
         .build()
         .connect()
@@ -77,22 +77,7 @@ let known_hosts = russh_extra::KnownHosts::load("~/.ssh/known_hosts")?;
 let session = Client::builder()
     .endpoint(("example.com", 22))
     .username("deploy")
-    .password(std::env::var("SSH_PASSWORD")?)
-    .known_hosts(known_hosts)
-    .build()
-    .connect()
-    .await?;
-```
-
-### Private Key Authentication
-
-```rust
-let known_hosts = russh_extra::KnownHosts::load("~/.ssh/known_hosts")?;
-
-let session = Client::builder()
-    .endpoint(("example.com", 22))
-    .username("deploy")
-    .identity(russh_extra::Identity::load_openssh_file("~/.ssh/id_ed25519")?)
+    .password(std::env::var("SSH_PASSWORD").unwrap_or_default())
     .known_hosts(known_hosts)
     .build()
     .connect()
@@ -199,6 +184,18 @@ let n = shell.read(&mut buf).await?;
 println!("{}", String::from_utf8_lossy(&buf[..n]));
 shell.resize(80, 24).await?;
 shell.close().await?;
+
+// For tokio::io integration, convert to AsyncRead + AsyncWrite:
+let mut async_io = session
+    .shell()
+    .pty(russh_extra::Pty::new("xterm-256color", 120, 40))
+    .build()
+    .open()
+    .await?
+    .into_async_io()
+    .await?;
+
+tokio::io::copy(&mut async_io, &mut tokio::io::stdout()).await?;
 ```
 
 Subsystem channels use the same streaming handle. For a higher-level SFTP
@@ -208,8 +205,7 @@ experience, enable the `sftp` feature and use `Session::sftp()` (see the
 ## Port Forwarding
 
 Enable the `tunnel` feature for local TCP forwarding, remote TCP forwarding,
-and one-shot direct TCP channels. Streamlocal and dynamic SOCKS-style forwarding
-are deferred.
+one-shot direct TCP channels, and StreamLocal (Unix-domain) forwarding.
 
 ### Local Forwarding
 
@@ -222,7 +218,7 @@ let tunnel = session
     .start()
     .await?;
 
-println!("bound: {}", tunnel.bound_addr());
+println!("bound: {}", tunnel.bound_addr().unwrap());
 tunnel.close().await?;
 ```
 
@@ -249,9 +245,39 @@ let tunnel = session
     .start()
     .await?;
 
-println!("remote port: {}", tunnel.bound_addr().port());
+println!("remote port: {}", tunnel.bound_addr().unwrap().port());
 tunnel.close().await?;
 ```
+
+### StreamLocal (Unix-Domain) Forwarding
+
+```rust
+let tunnel = session
+    .tunnel(russh_extra::ForwardSpec::local_streamlocal(
+        "/tmp/remote.sock",
+        "/var/run/app.sock",
+    ))
+    .start()
+    .await?;
+
+println!("bound to: {}", tunnel.bound_path().unwrap());
+tunnel.close().await?;
+```
+
+One-shot direct StreamLocal channels:
+
+```rust
+let mut stream = session
+    .direct_streamlocal("/var/run/service.sock")
+    .open()
+    .await?;
+
+stream.write_all(b"ping").await?;
+stream.close().await?;
+```
+
+StreamLocal forwarding is available on Unix platforms when the `tunnel` feature
+is enabled.
 
 ## Server
 
@@ -322,7 +348,7 @@ use russh_extra::{SftpServerHandler, SftpMetadata, SftpDirEntry};
 
 struct MyFs;
 
-#[async_trait::async_trait]
+#[russh_extra::async_trait]
 impl SftpServerHandler for MyFs {
     async fn read(&self, _id: u32, handle: String, offset: u64, len: u32)
         -> russh_extra::Result<Vec<u8>>
@@ -341,8 +367,8 @@ impl SftpServerHandler for MyFs {
 | `known-hosts` | yes | Known-hosts parser, in-memory store, and client integration |
 | `aws-lc-rs` | yes | `russh` crypto backend via aws-lc-rs |
 | `server` | no | Server listener, auth callbacks, exec routing, lifecycle hooks |
-| `shell` | no | Interactive shell, PTY, resize, and subsystem channels |
-| `tunnel` | no | Local/remote TCP forwarding and direct TCP channels |
+| `shell` | no | Interactive shell, PTY, X11 forwarding, agent forwarding, subsystems |
+| `tunnel` | no | TCP and StreamLocal (Unix-domain) forwarding, direct channels |
 | `agent` | no | SSH agent authentication using `$SSH_AUTH_SOCK` on Unix |
 | `sftp` | no | Native SFTP v3 client and server (`SftpClient` + `SftpServerHandler` trait) |
 | `ring` | no | Alternative `russh` crypto backend via ring |
@@ -428,19 +454,21 @@ Implemented and covered by local tests:
 - Buffered `Session::command()` with stdout/stderr capture, stdin, limits, and exit metadata.
 - Explicit `Session::disconnect()` for graceful client-side connection teardown.
 - Server listener, password auth, public-key auth, keyboard-interactive auth, exact command routing, streaming exec, env propagation, lifecycle hooks, and graceful shutdown.
-- Interactive shell, PTY allocation, resize, signal, and subsystem channel opening.
+- Interactive shell, PTY allocation, resize, signal, X11 forwarding, agent forwarding, and subsystem channel opening.
 - Native SFTP v3 client: open, read, write, close, stat, lstat, opendir, readdir, remove, rename, mkdir, rmdir, realpath, readlink, symlink.
-- Direct TCP channels, local TCP forwarding, and remote TCP forwarding.
+- Direct TCP channels, local TCP forwarding, remote TCP forwarding, and StreamLocal (Unix-domain) forwarding.
+- OpenSSH certificate authentication (certificate + private key pairs).
+- Authentication banner display and server-side banner configuration.
 - Structured tracing spans on connect, command, disconnect, and server run entry points.
-- Typed error taxonomy and local loopback test fixtures (187 tests).
-- 10 example programs covering client, server, shell, subsystem, known-hosts, SFTP, and forwarding workflows.
+- Typed error taxonomy and local loopback test fixtures (200 tests).
+- 14 example programs covering client, server, shell, subsystem, known-hosts, SFTP, and forwarding workflows.
 
 Not yet implemented:
 
 - Hashed hostname known-hosts matching and writing.
-- Streamlocal forwarding.
+- Wildcard hostname known-hosts matching.
 - Dynamic SOCKS-style forwarding.
-- Split shell/stream read/write halves and `AsyncRead`/`AsyncWrite` trait impls.
+- SFTP v4+ extensions.
 
 ## Examples
 
@@ -449,6 +477,7 @@ The `crates/russh-extra/examples/` directory contains working example programs:
 | Example | Feature flags | Description |
 |---|---|---|
 | [`client_exec`](crates/russh-extra/examples/client_exec.rs) | `client` | Remote command execution with password auth |
+| [`client_exec_password`](crates/russh-extra/examples/client_exec_password.rs) | `client` | Password auth with explicit credential |
 | [`client_private_key`](crates/russh-extra/examples/client_private_key.rs) | `client`, `known-hosts` | Private key auth with known-hosts verification |
 | [`client_shell`](crates/russh-extra/examples/client_shell.rs) | `client`, `shell` | Interactive shell with PTY allocation |
 | [`client_subsystem`](crates/russh-extra/examples/client_subsystem.rs) | `client`, `shell` | Raw SSH subsystem channel |
@@ -456,8 +485,11 @@ The `crates/russh-extra/examples/` directory contains working example programs:
 | [`client_sftp`](crates/russh-extra/examples/client_sftp.rs) | `client`, `sftp` | SFTP file read, upload, and directory listing |
 | [`local_forward`](crates/russh-extra/examples/local_forward.rs) | `client`, `tunnel` | Local TCP port forwarding |
 | [`remote_forward`](crates/russh-extra/examples/remote_forward.rs) | `client`, `tunnel` | Remote TCP port forwarding |
+| [`server_exec`](crates/russh-extra/examples/server_exec.rs) | `server` | Server with exec routing |
 | [`server_password`](crates/russh-extra/examples/server_password.rs) | `server` | Server with password auth and exec routing |
 | [`server_public_key`](crates/russh-extra/examples/server_public_key.rs) | `server` | Server with public key authentication |
+| [`server_streaming_exec`](crates/russh-extra/examples/server_streaming_exec.rs) | `server` | Server with streaming exec handlers |
+| [`tracing`](crates/russh-extra/examples/tracing.rs) | `client`, `known-hosts` | Tracing instrumentation with env-filter |
 
 Each example uses environment variables for configuration. Run with:
 

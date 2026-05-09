@@ -18,48 +18,20 @@ changes may occur without a new major version.
 - **Breaking**: renamed `HostKeyPolicy::AcceptAny` to
   `HostKeyPolicy::InsecureAcceptAny` to make the insecure policy explicit in
   the type name.
-- Added `agent` feature flag (`agent = ["client"]`) for SSH agent
-  authentication through `$SSH_AUTH_SOCK` on Unix platforms.
-- License changed from MIT-only to MIT OR Apache-2.0 (added `LICENSE-APACHE`
-  file, updated `Cargo.toml` workspace metadata).
-
-### Added
-
-- SFTP v3 server handler trait (`SftpServerHandler`) with `init`, `open`,
-  `close`, `read`, `write`, `remove`, `rename`, `mkdir`, `rmdir`, `opendir`,
-  `readdir`, `stat`, `lstat`, `fstat`, `setstat`, `fsetstat`, `realpath`,
-  `readlink`, and `symlink` methods. All have default "not implemented" stubs.
-- `ServerBuilder::sftp_handler()` for registering an SFTP server handler.
-  Requires both `server` and `sftp` features.
-- SFTP server runtime (`SftpServerRuntime`) with packet reassembly, request
-  dispatch, and response encoding over the subsystem channel.
-- SFTP `set_stat` / `fset_stat` client operations via `SftpClient` and `SftpFile`.
-- SFTP status code name helper (`status_code_name`) for improved error messages.
-- SFTP server-side packet decode functions (`decode_open_request`,
-  `decode_close_request`, `decode_read_request`, etc.) and response encode
-  functions (`encode_version_response`, `encode_status_response`,
-  `encode_handle_response`, etc.).
-- `SftpDirEntry::new()` public constructor for server handlers.
-- `SftpMetadata::to_packet()` conversion for setstat/fsetstat.
-- `SftpMetadata::with_size()`, `with_permissions()`, and `with_uid_gid()` builder
-  methods for server-side handler implementations.
-- `async_trait` re-exported from `russh-extra` under `features = ["sftp", "server"]`
-  so downstream users can implement `SftpServerHandler` without adding the
-  `async_trait` crate.
-- SFTP server integration tests (`sftp_server.rs`) covering open/write/close/stat,
-  read-eof, missing file errors, and file removal through the `SftpServerHandler` trait.
-
-### Changed
-
 - `sftp` feature now included in `full` feature set (client and server SFTP
   runtimes are implemented and tested).
+- License changed from MIT-only to MIT OR Apache-2.0 (added `LICENSE-APACHE`
+  file, updated `Cargo.toml` workspace metadata).
+- `SftpClientRuntime` no longer stores a redundant `session_id` field.
+
+### Fixed
+
 - Fixed `SftpFile::close()` and `SftpDir::close()` firing a duplicate close on
   drop after explicit close was called. Added `closed` flag to prevent the
   best-effort drop-based close when `close()` was already called.
 - Fixed `encode_init()` to include the extension count field (previously only
   sent the version, causing the server-side `SftpServerRuntime` to reject the
   init packet as truncated).
-- `SftpClientRuntime` no longer stores a redundant `session_id` field.
 - Removed `unreachable!()` panic in SFTP `expect_handle`; replaced with
   proper error reporting via `status_code_name`.
 - Removed all `#[allow(dead_code)]` annotations in `sftp/packet.rs` (now
@@ -70,7 +42,11 @@ changes may occur without a new major version.
 
 - `russh-extra-macros` crate removed from workspace (no runtime to ship).
 - `SftpServer` reserved marker type removed; replaced by `SftpServerHandler` trait.
-- Typed error taxonomy with 14 top-level error variants and subcategory kind
+
+### Added
+
+- Added `agent` feature flag (`agent = ["client"]`) for SSH agent
+  authentication through `$SSH_AUTH_SOCK` on Unix platforms.
   enums via `CategoryError<K>`.
 - Client connect API: `Client::builder()`, `ClientBuilder`, `Client::connect()`.
 - Password authentication with configurable credential order.
@@ -203,5 +179,41 @@ changes may occur without a new major version.
   challenge-response protocol with timeout support.
 - Client-side keyboard-interactive integration tests: single-prompt success,
   wrong-answer rejection, multi-step atomic-counter-based acceptance.
+- StreamLocal (Unix-domain) forwarding: `ForwardSpec::local_streamlocal()` and
+  `ForwardSpec::remote_streamlocal()` constructors, `DirectStreamLocalBuilder`,
+  `Session::direct_streamlocal()`, client-side remote StreamLocal registry,
+  `TunnelBindPoint` enum, and `Tunnel::bound_path()`.
+- Server-side StreamLocal forwarding: `StreamLocalForwardContext`,
+  `DirectStreamLocalContext` types, callback aliases and builder methods,
+  `ServerHandler` trait methods `streamlocal_forward()`,
+  `cancel_streamlocal_forward()`, and `channel_open_direct_streamlocal()`.
+- `ShellAsyncIo` struct implementing `tokio::io::AsyncRead` and
+  `AsyncWrite` via `ShellHandle::into_async_io()`. Internally spawned
+  channel bridge task routes SSH channel messages to a read stream
+  and write commands to the channel.
+- SFTP batch readdir: `SftpDir` buffers all entries from `SSH_FXP_NAME`
+  responses and drains them one-at-a-time, reducing round-trips.
+- `SftpMetadata::new(size, uid, gid, permissions, accessed, modified)`
+  full public constructor and `with_accessed()`/`with_modified()` builders.
+- `Tunnel::bound_addr()` now returns `Option<SocketAddr>` (changed from
+  `SocketAddr`) to support `TunnelBindPoint::StreamLocal` paths.
+- X11 forwarding: `ShellBuilder::x11()` and `x11_with_cookie()` for
+  requesting X11 forwarding on shell/subsystem sessions. Client-side
+  X11 channel handling via `ClientBuilder::x11_display()`. Server-side
+  `X11RequestContext`, `X11ChannelContext`, `x11_request_handler()`,
+  `x11_channel_handler()` on `ServerBuilder`, and `ServerHandler`
+  trait methods `x11_request()` + `channel_open_x11()`.
+- Agent forwarding tunnel: `ShellBuilder::agent_forward()` to request
+  `auth-agent-req@openssh.com` on a session. Client bridges incoming
+  agent channels to `$SSH_AUTH_SOCK`. Server-side `AgentRequestContext`,
+  `agent_request_handler()` on `ServerBuilder`, and `ServerHandler`
+  trait method `agent_request()`.
+- OpenSSH certificate authentication: `CertificateCredential` type with
+  `load(key_path, cert_path)` and `from_parts(private_key, certificate)`.
+  `ClientBuilder::certificate()`. Server-side `auth_openssh_certificate()`
+  on `ServerBuilder`, `ServerHandler` trait method.
+- Authentication banner: `Session::auth_banner()` returns the server
+  banner text if one was sent during authentication. Server-side
+  `ServerBuilder::banner()`.
 
 [0.1.0]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.0
