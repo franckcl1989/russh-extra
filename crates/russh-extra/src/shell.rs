@@ -3,14 +3,19 @@
 //! Shell channels provide streaming async I/O with separate stdin, stdout,
 //! and stderr, plus resize, signal, and exit-status observation.
 
+use std::fmt;
+use std::io;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use russh::ChannelMsg;
 use russh::client;
 use russh_extra_core::{
     ChannelErrorKind, CommandExit, Error, Operation, Pty, Result, SessionId, Timeouts,
 };
-use tokio::sync::Mutex;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time;
 
 /// Converts `russh-extra-core::TerminalMode` to a `russh::Pty` opcode.
@@ -177,6 +182,35 @@ impl ShellHandle {
     /// Returns a reference to the underlying russh channel.
     pub fn russh_channel(&self) -> &russh::Channel<russh::client::Msg> {
         &self.channel
+    }
+
+    /// Converts this shell handle into an `AsyncRead` + `AsyncWrite` wrapper.
+    ///
+    /// Spawns a background task that bridges the underlying SSH channel
+    /// to pollable read/write streams. The returned [`ShellAsyncIo`]
+    /// implements [`tokio::io::AsyncRead`] and [`tokio::io::AsyncWrite`],
+    /// enabling use with `tokio::io::copy`, `tokio::io::split`, etc.
+    ///
+    /// The original `ShellHandle` is consumed. After calling this method,
+    /// use the returned `ShellAsyncIo` for all I/O.
+    pub fn into_async_io(self) -> ShellAsyncIo {
+        let (read_tx, read_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+        let exit = Arc::new(Mutex::new(CommandExit::Missing));
+
+        let exit_clone = exit.clone();
+        let cmd_tx_clone = cmd_tx.clone();
+        tokio::spawn(async move {
+            run_channel_bridge(self.channel, read_tx, cmd_rx, cmd_tx_clone, exit_clone).await;
+        });
+
+        ShellAsyncIo {
+            read_rx,
+            cmd_tx,
+            read_buf: Vec::new(),
+            read_pos: 0,
+            eof_sent: false,
+        }
     }
 }
 
@@ -547,7 +581,166 @@ fn map_shell_error(error: russh::Error) -> Error {
     }
 }
 
-use std::fmt;
+// ── ShellAsyncIo (AsyncRead + AsyncWrite wrapper) ──────────────────
+
+/// Command sent from `ShellAsyncIo` to the channel bridge task.
+#[derive(Debug)]
+enum ShellCmd {
+    Write(Vec<u8>),
+    Eof,
+    Resize(u32, u32),
+    Signal(russh::Sig),
+}
+
+/// An `AsyncRead` + `AsyncWrite` wrapper around a shell or subsystem channel.
+///
+/// Obtained via [`ShellHandle::into_async_io`]. Spawns a background task
+/// that bridges the underlying `russh` channel to pollable streams.
+///
+/// Implements [`tokio::io::AsyncRead`] and [`tokio::io::AsyncWrite`],
+/// enabling use with `tokio::io::copy`, `tokio::io::split`, etc.
+pub struct ShellAsyncIo {
+    read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    cmd_tx: mpsc::UnboundedSender<ShellCmd>,
+    read_buf: Vec<u8>,
+    read_pos: usize,
+    eof_sent: bool,
+}
+
+impl fmt::Debug for ShellAsyncIo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ShellAsyncIo")
+            .field("eof_sent", &self.eof_sent)
+            .finish()
+    }
+}
+
+impl ShellAsyncIo {
+    /// Resizes the terminal window.
+    pub fn resize(&self, cols: u32, rows: u32) {
+        let _ = self.cmd_tx.send(ShellCmd::Resize(cols, rows));
+    }
+
+    /// Sends a signal to the remote process.
+    pub fn signal(&self, sig: russh::Sig) {
+        let _ = self.cmd_tx.send(ShellCmd::Signal(sig));
+    }
+}
+
+impl AsyncRead for ShellAsyncIo {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        if self.read_pos < self.read_buf.len() {
+            let remaining = &self.read_buf[self.read_pos..];
+            let n = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..n]);
+            self.read_pos += n;
+            return Poll::Ready(Ok(()));
+        }
+
+        match self.read_rx.poll_recv(cx) {
+            Poll::Ready(Some(data)) => {
+                let n = data.len().min(buf.remaining());
+                buf.put_slice(&data[..n]);
+                if n < data.len() {
+                    self.read_buf = data;
+                    self.read_pos = n;
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(None) => Poll::Ready(Ok(())),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncWrite for ShellAsyncIo {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        self.cmd_tx
+            .send(ShellCmd::Write(buf.to_vec()))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "shell channel closed"))?;
+        Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        if !self.eof_sent {
+            let _ = self.cmd_tx.send(ShellCmd::Eof);
+            self.eof_sent = true;
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+/// Background task that bridges the SSH channel with mpsc channels.
+///
+/// Reads `ChannelMsg` from the channel and forwards data to `read_tx`.
+/// Receives commands from `cmd_rx` and issues them on the channel.
+async fn run_channel_bridge(
+    mut channel: russh::Channel<russh::client::Msg>,
+    read_tx: mpsc::UnboundedSender<Vec<u8>>,
+    mut cmd_rx: mpsc::UnboundedReceiver<ShellCmd>,
+    _cmd_tx: mpsc::UnboundedSender<ShellCmd>,
+    _exit: Arc<Mutex<CommandExit>>,
+) {
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(ChannelMsg::Data { data })
+                        if read_tx.send(data.to_vec()).is_err() =>
+                    {
+                        break;
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        *_exit.lock().await = CommandExit::Status(exit_status);
+                    }
+                    Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                        *_exit.lock().await = CommandExit::Signal(
+                            crate::client::signal_to_name(signal_name),
+                        );
+                    }
+                    Some(ChannelMsg::Close) | None => {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(ShellCmd::Write(data)) => {
+                        let _ = channel.data(data.as_slice()).await;
+                    }
+                    Some(ShellCmd::Eof) => {
+                        let _ = channel.eof().await;
+                    }
+                    Some(ShellCmd::Resize(cols, rows)) => {
+                        let _ = channel.window_change(cols, rows, 0, 0).await;
+                    }
+                    Some(ShellCmd::Signal(sig)) => {
+                        let _ = channel.signal(sig).await;
+                    }
+                    None => {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

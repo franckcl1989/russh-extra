@@ -30,6 +30,8 @@ pub struct Client {
     known_hosts_accept_new: bool,
     #[cfg(feature = "tunnel")]
     remote_forwards: crate::tunnel::RemoteForwardMap,
+    #[cfg(feature = "tunnel")]
+    remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
 }
 
 impl fmt::Debug for Client {
@@ -56,6 +58,8 @@ impl Client {
             known_hosts_accept_new: false,
             #[cfg(feature = "tunnel")]
             remote_forwards: crate::tunnel::RemoteForwardMap::default(),
+            #[cfg(feature = "tunnel")]
+            remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap::default(),
         }
     }
 
@@ -81,6 +85,8 @@ impl Client {
             endpoint.clone(),
             #[cfg(feature = "tunnel")]
             self.remote_forwards.clone(),
+            #[cfg(feature = "tunnel")]
+            self.remote_streamlocal_forwards.clone(),
         );
 
         let mut handle = time::timeout(
@@ -100,6 +106,8 @@ impl Client {
             handle: Some(Arc::new(Mutex::new(handle))),
             #[cfg(feature = "tunnel")]
             remote_forwards: self.remote_forwards.clone(),
+            #[cfg(feature = "tunnel")]
+            remote_streamlocal_forwards: self.remote_streamlocal_forwards.clone(),
         })
     }
 }
@@ -113,6 +121,8 @@ pub struct ClientBuilder {
     known_hosts_accept_new: bool,
     #[cfg(feature = "tunnel")]
     remote_forwards: crate::tunnel::RemoteForwardMap,
+    #[cfg(feature = "tunnel")]
+    remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
 }
 
 impl Default for ClientBuilder {
@@ -126,6 +136,8 @@ impl Default for ClientBuilder {
             known_hosts_accept_new: false,
             #[cfg(feature = "tunnel")]
             remote_forwards: crate::tunnel::RemoteForwardMap::default(),
+            #[cfg(feature = "tunnel")]
+            remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap::default(),
         }
     }
 }
@@ -266,6 +278,8 @@ impl ClientBuilder {
             known_hosts_accept_new: self.known_hosts_accept_new,
             #[cfg(feature = "tunnel")]
             remote_forwards: self.remote_forwards,
+            #[cfg(feature = "tunnel")]
+            remote_streamlocal_forwards: self.remote_streamlocal_forwards,
         }
     }
 }
@@ -284,6 +298,8 @@ pub struct ClientHandler {
     _endpoint: Endpoint,
     #[cfg(feature = "tunnel")]
     remote_forwards: crate::tunnel::RemoteForwardMap,
+    #[cfg(feature = "tunnel")]
+    remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
 }
 
 impl fmt::Debug for ClientHandler {
@@ -302,6 +318,8 @@ impl ClientHandler {
         #[cfg(feature = "known-hosts")] endpoint: Endpoint,
         #[cfg(not(feature = "known-hosts"))] _endpoint: Endpoint,
         #[cfg(feature = "tunnel")] remote_forwards: crate::tunnel::RemoteForwardMap,
+        #[cfg(feature = "tunnel")]
+        remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
     ) -> Self {
         Self {
             host_key_policy,
@@ -315,6 +333,8 @@ impl ClientHandler {
             _endpoint,
             #[cfg(feature = "tunnel")]
             remote_forwards,
+            #[cfg(feature = "tunnel")]
+            remote_streamlocal_forwards,
         }
     }
 
@@ -402,6 +422,39 @@ impl client::Handler for ClientHandler {
     }
 
     #[cfg(feature = "tunnel")]
+    async fn server_channel_open_forwarded_streamlocal(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        socket_path: &str,
+        _session: &mut russh::client::Session,
+    ) -> std::result::Result<(), Self::Error> {
+        let target = {
+            let fwds = self.remote_streamlocal_forwards.lock().await;
+            fwds.get(socket_path).cloned()
+        };
+        match target {
+            Some(target_path) => {
+                tracing::debug!(
+                    remote_path = %socket_path,
+                    local_target = %target_path.display(),
+                    "accepted forwarded streamlocal channel",
+                );
+                tokio::task::spawn(async move {
+                    crate::tunnel::copy_bidirectional_with_unix_path(channel, &target_path).await;
+                });
+            }
+            None => {
+                tracing::warn!(
+                    remote_path = %socket_path,
+                    "received forwarded-streamlocal channel for unknown path",
+                );
+                let _ = channel.close().await;
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "tunnel")]
     async fn server_channel_open_direct_tcpip(
         &mut self,
         channel: russh::Channel<russh::client::Msg>,
@@ -450,6 +503,8 @@ pub struct Session {
     handle: Option<Arc<Mutex<client::Handle<ClientHandler>>>>,
     #[cfg(feature = "tunnel")]
     remote_forwards: crate::tunnel::RemoteForwardMap,
+    #[cfg(feature = "tunnel")]
+    remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
 }
 
 impl fmt::Debug for Session {
@@ -474,6 +529,8 @@ impl Session {
             handle: None,
             #[cfg(feature = "tunnel")]
             remote_forwards: crate::tunnel::RemoteForwardMap::default(),
+            #[cfg(feature = "tunnel")]
+            remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap::default(),
         }
     }
 
@@ -656,6 +713,8 @@ impl Session {
             self.handle.clone(),
             #[cfg(feature = "tunnel")]
             self.remote_forwards.clone(),
+            #[cfg(feature = "tunnel")]
+            self.remote_streamlocal_forwards.clone(),
             spec.into(),
             self.timeouts.clone(),
         )
@@ -671,6 +730,20 @@ impl Session {
             self.id,
             self.handle.clone(),
             target.into(),
+            self.timeouts.clone(),
+        )
+    }
+
+    /// Creates a direct streamlocal (Unix domain socket) builder for this session.
+    #[cfg(feature = "tunnel")]
+    pub fn direct_streamlocal<P: Into<std::path::PathBuf>>(
+        &self,
+        socket_path: P,
+    ) -> crate::tunnel::DirectStreamLocalBuilder {
+        crate::tunnel::DirectStreamLocalBuilder::from_session(
+            self.id,
+            self.handle.clone(),
+            socket_path.into(),
             self.timeouts.clone(),
         )
     }

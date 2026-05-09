@@ -250,22 +250,21 @@ impl SftpClientRuntime {
         Ok(SftpDir::new(handle, self.clone()))
     }
 
-    pub async fn readdir_entry(&self, handle: &str) -> Result<Option<SftpDirEntry>> {
+    pub async fn readdir_batch(&self, handle: &str) -> Result<Vec<SftpDirEntry>> {
         let id = self.next_request_id();
         let packet = packet::encode_readdir(id, handle);
         match self.send_and_await(packet, id).await? {
-            SftpResponse::Name(entries) => {
-                let (filename, longname, attrs) = entries
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| Error::sftp(SftpErrorKind::Protocol, "empty NAME response"))?;
-                Ok(Some(SftpDirEntry::from_packet(filename, longname, attrs)))
-            }
+            SftpResponse::Name(entries) => Ok(entries
+                .into_iter()
+                .map(|(filename, longname, attrs)| {
+                    SftpDirEntry::from_packet(filename, longname, attrs)
+                })
+                .collect()),
             SftpResponse::Status(code, msg) => {
                 if code == packet::SSH_FX_EOF {
-                    Ok(None)
+                    Ok(Vec::new())
                 } else {
-                    packet::check_status(code, &msg).map(|()| None)
+                    packet::check_status(code, &msg).map(|()| Vec::new())
                 }
             }
             other => Err(Error::sftp(

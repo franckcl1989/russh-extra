@@ -58,7 +58,7 @@ async fn main() -> russh_extra::Result<()> {
     let tunnel = session.tunnel(spec).start().await?;
     println!(
         "Forwarding 127.0.0.1:{} -> {}:{}",
-        tunnel.bound_addr().port(),
+        tunnel.bound_addr().unwrap().port(),
         remote_host,
         remote_port,
     );

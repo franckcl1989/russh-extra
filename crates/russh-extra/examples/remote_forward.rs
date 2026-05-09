@@ -58,7 +58,7 @@ async fn main() -> russh_extra::Result<()> {
     println!(
         "Remote {}:{} -> {}:{}",
         host,
-        tunnel.bound_addr().port(),
+        tunnel.bound_addr().unwrap().port(),
         local_host,
         local_port,
     );

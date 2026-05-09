@@ -71,6 +71,24 @@ impl StreamLocalSpec {
     }
 }
 
+impl From<&str> for StreamLocalSpec {
+    fn from(path: &str) -> Self {
+        Self::new(path)
+    }
+}
+
+impl From<String> for StreamLocalSpec {
+    fn from(path: String) -> Self {
+        Self::new(path)
+    }
+}
+
+impl From<PathBuf> for StreamLocalSpec {
+    fn from(path: PathBuf) -> Self {
+        Self { path }
+    }
+}
+
 /// High-level forwarding specification.
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,6 +126,30 @@ impl ForwardSpec {
     /// Creates a remote TCP forwarding specification.
     pub fn remote_tcp(bind: impl Into<TcpEndpoint>, target: impl Into<TcpEndpoint>) -> Self {
         Self::Tcp {
+            direction: ForwardDirection::Remote,
+            bind: bind.into(),
+            target: target.into(),
+        }
+    }
+
+    /// Creates a local streamlocal forwarding specification.
+    pub fn local_streamlocal(
+        bind: impl Into<StreamLocalSpec>,
+        target: impl Into<StreamLocalSpec>,
+    ) -> Self {
+        Self::StreamLocal {
+            direction: ForwardDirection::Local,
+            bind: bind.into(),
+            target: target.into(),
+        }
+    }
+
+    /// Creates a remote streamlocal forwarding specification.
+    pub fn remote_streamlocal(
+        bind: impl Into<StreamLocalSpec>,
+        target: impl Into<StreamLocalSpec>,
+    ) -> Self {
+        Self::StreamLocal {
             direction: ForwardDirection::Remote,
             bind: bind.into(),
             target: target.into(),

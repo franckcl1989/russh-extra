@@ -39,6 +39,12 @@ type ForwardedTcpipCallback =
     Arc<dyn Fn(ForwardedTcpipContext) -> BoxFutureResult<bool> + Send + Sync>;
 type CancelTcpipForwardCallback =
     Arc<dyn Fn(TcpipForwardContext) -> BoxFutureResult<bool> + Send + Sync>;
+type StreamLocalForwardCallback =
+    Arc<dyn Fn(StreamLocalForwardContext) -> BoxFutureResult<bool> + Send + Sync>;
+type CancelStreamLocalForwardCallback =
+    Arc<dyn Fn(StreamLocalForwardContext) -> BoxFutureResult<bool> + Send + Sync>;
+type DirectStreamLocalCallback =
+    Arc<dyn Fn(DirectStreamLocalContext) -> BoxFutureResult<bool> + Send + Sync>;
 type ConnectCallback = Arc<dyn Fn(SessionContext) -> BoxFutureResult<()> + Send + Sync>;
 type DisconnectCallback = Arc<dyn Fn(SessionId) -> BoxFutureResult<()> + Send + Sync>;
 type AuthSuccessCallback = Arc<dyn Fn(SessionContext) -> BoxFutureResult<()> + Send + Sync>;
@@ -171,6 +177,9 @@ pub struct ServerBuilder {
     cancel_tcpip_forward_handler: Option<CancelTcpipForwardCallback>,
     direct_tcpip_handler: Option<DirectTcpipCallback>,
     forwarded_tcpip_handler: Option<ForwardedTcpipCallback>,
+    streamlocal_forward_handler: Option<StreamLocalForwardCallback>,
+    cancel_streamlocal_forward_handler: Option<CancelStreamLocalForwardCallback>,
+    direct_streamlocal_handler: Option<DirectStreamLocalCallback>,
     shutdown_grace: Duration,
     on_connect: Option<ConnectCallback>,
     on_disconnect: Option<DisconnectCallback>,
@@ -372,6 +381,32 @@ impl ServerBuilder {
             Box::pin(async move { fwd_tcpip_handler.channel_open_forwarded_tcpip(ctx).await })
         }));
 
+        let streamlocal_handler = Arc::new(handler.clone());
+        self.streamlocal_forward_handler = Some(Arc::new(move |ctx| {
+            let streamlocal_handler = Arc::clone(&streamlocal_handler);
+            Box::pin(async move { streamlocal_handler.streamlocal_forward(ctx).await })
+        }));
+
+        let cancel_streamlocal_handler = Arc::new(handler.clone());
+        self.cancel_streamlocal_forward_handler = Some(Arc::new(move |ctx| {
+            let cancel_streamlocal_handler = Arc::clone(&cancel_streamlocal_handler);
+            Box::pin(async move {
+                cancel_streamlocal_handler
+                    .cancel_streamlocal_forward(ctx)
+                    .await
+            })
+        }));
+
+        let direct_streamlocal_handler = Arc::new(handler.clone());
+        self.direct_streamlocal_handler = Some(Arc::new(move |ctx| {
+            let direct_streamlocal_handler = Arc::clone(&direct_streamlocal_handler);
+            Box::pin(async move {
+                direct_streamlocal_handler
+                    .channel_open_direct_streamlocal(ctx)
+                    .await
+            })
+        }));
+
         let connect_handler = Arc::new(handler.clone());
         self.on_connect = Some(Arc::new(move |ctx| {
             let connect_handler = Arc::clone(&connect_handler);
@@ -500,6 +535,36 @@ impl ServerBuilder {
         self
     }
 
+    /// Registers a streamlocal forwarding handler.
+    pub fn streamlocal_forward_handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(StreamLocalForwardContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<bool>> + Send + 'static,
+    {
+        self.streamlocal_forward_handler = Some(Arc::new(move |ctx| Box::pin(handler(ctx))));
+        self
+    }
+
+    /// Registers a cancel streamlocal forwarding handler.
+    pub fn cancel_streamlocal_forward_handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(StreamLocalForwardContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<bool>> + Send + 'static,
+    {
+        self.cancel_streamlocal_forward_handler = Some(Arc::new(move |ctx| Box::pin(handler(ctx))));
+        self
+    }
+
+    /// Registers a direct streamlocal channel handler.
+    pub fn direct_streamlocal_handler<F, Fut>(mut self, handler: F) -> Self
+    where
+        F: Fn(DirectStreamLocalContext) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<bool>> + Send + 'static,
+    {
+        self.direct_streamlocal_handler = Some(Arc::new(move |ctx| Box::pin(handler(ctx))));
+        self
+    }
+
     /// Registers a connection lifecycle callback.
     ///
     /// Called (via `tokio::spawn`) when a new client TCP connection is
@@ -581,6 +646,9 @@ impl ServerBuilder {
             cancel_tcpip_forward_handler: self.cancel_tcpip_forward_handler,
             direct_tcpip_handler: self.direct_tcpip_handler,
             forwarded_tcpip_handler: self.forwarded_tcpip_handler,
+            streamlocal_forward_handler: self.streamlocal_forward_handler,
+            cancel_streamlocal_forward_handler: self.cancel_streamlocal_forward_handler,
+            direct_streamlocal_handler: self.direct_streamlocal_handler,
             shutdown_grace: self.shutdown_grace,
             handle,
             last_error: Mutex::new(None),
@@ -647,6 +715,9 @@ impl Default for ServerBuilder {
             cancel_tcpip_forward_handler: None,
             direct_tcpip_handler: None,
             forwarded_tcpip_handler: None,
+            streamlocal_forward_handler: None,
+            cancel_streamlocal_forward_handler: None,
+            direct_streamlocal_handler: None,
             shutdown_grace: Duration::from_secs(30),
             on_connect: None,
             on_disconnect: None,
@@ -1276,6 +1347,19 @@ pub struct TcpipForwardContext {
     pub server: ServerHandle,
 }
 
+/// Context for a streamlocal forwarding global request.
+#[derive(Clone, Debug)]
+pub struct StreamLocalForwardContext {
+    /// Session identifier.
+    pub session_id: SessionId,
+    /// Authenticated username.
+    pub username: Username,
+    /// Requested bind socket path.
+    pub socket_path: String,
+    /// Server handle for lifecycle operations.
+    pub server: ServerHandle,
+}
+
 /// Context for a direct TCP/IP channel open request.
 #[derive(Clone, Debug)]
 pub struct DirectTcpipContext {
@@ -1310,6 +1394,19 @@ pub struct ForwardedTcpipContext {
     pub originator_address: String,
     /// Originator port.
     pub originator_port: u32,
+    /// Server handle for lifecycle operations.
+    pub server: ServerHandle,
+}
+
+/// Context for a direct streamlocal (Unix domain socket) channel open request.
+#[derive(Clone, Debug)]
+pub struct DirectStreamLocalContext {
+    /// Session identifier.
+    pub session_id: SessionId,
+    /// Authenticated username.
+    pub username: Username,
+    /// Remote socket path to connect to.
+    pub socket_path: String,
     /// Server handle for lifecycle operations.
     pub server: ServerHandle,
 }
@@ -1457,6 +1554,30 @@ pub trait ServerHandler: Clone + Send + Sync + 'static {
     ) -> impl Future<Output = Result<bool>> + Send {
         async { Ok(false) }
     }
+
+    /// Handles a streamlocal forwarding global request.
+    fn streamlocal_forward(
+        &self,
+        _ctx: StreamLocalForwardContext,
+    ) -> impl Future<Output = Result<bool>> + Send {
+        async { Ok(false) }
+    }
+
+    /// Handles a cancel streamlocal forwarding global request.
+    fn cancel_streamlocal_forward(
+        &self,
+        _ctx: StreamLocalForwardContext,
+    ) -> impl Future<Output = Result<bool>> + Send {
+        async { Ok(false) }
+    }
+
+    /// Handles a direct streamlocal channel open request.
+    fn channel_open_direct_streamlocal(
+        &self,
+        _ctx: DirectStreamLocalContext,
+    ) -> impl Future<Output = Result<bool>> + Send {
+        async { Ok(false) }
+    }
 }
 
 /// Session metadata passed to server handlers.
@@ -1519,6 +1640,9 @@ struct ServerRuntime {
     cancel_tcpip_forward_handler: Option<CancelTcpipForwardCallback>,
     direct_tcpip_handler: Option<DirectTcpipCallback>,
     forwarded_tcpip_handler: Option<ForwardedTcpipCallback>,
+    streamlocal_forward_handler: Option<StreamLocalForwardCallback>,
+    cancel_streamlocal_forward_handler: Option<CancelStreamLocalForwardCallback>,
+    direct_streamlocal_handler: Option<DirectStreamLocalCallback>,
     shutdown_grace: Duration,
     handle: ServerHandle,
     last_error: Mutex<Option<Error>>,
@@ -2355,18 +2479,80 @@ impl server::Handler for HighLevelRusshHandler {
 
     async fn streamlocal_forward(
         &mut self,
-        _socket_path: &str,
+        socket_path: &str,
         _session: &mut server::Session,
     ) -> std::result::Result<bool, Self::Error> {
-        Ok(false)
+        let Some(handler) = self.runtime.streamlocal_forward_handler.as_ref() else {
+            return Ok(false);
+        };
+        let username = match &self.username {
+            Some(u) => u.clone(),
+            None => return Ok(false),
+        };
+        let ctx = StreamLocalForwardContext {
+            session_id: self.session_id,
+            username,
+            socket_path: socket_path.to_owned(),
+            server: self.runtime.handle.clone(),
+        };
+        handler(ctx).await.map_err(ServerRuntimeError::HighLevel)
     }
 
     async fn cancel_streamlocal_forward(
         &mut self,
-        _socket_path: &str,
+        socket_path: &str,
         _session: &mut server::Session,
     ) -> std::result::Result<bool, Self::Error> {
-        Ok(false)
+        let Some(handler) = self.runtime.cancel_streamlocal_forward_handler.as_ref() else {
+            return Ok(false);
+        };
+        let username = match &self.username {
+            Some(u) => u.clone(),
+            None => return Ok(false),
+        };
+        let ctx = StreamLocalForwardContext {
+            session_id: self.session_id,
+            username,
+            socket_path: socket_path.to_owned(),
+            server: self.runtime.handle.clone(),
+        };
+        handler(ctx).await.map_err(ServerRuntimeError::HighLevel)
+    }
+
+    async fn channel_open_direct_streamlocal(
+        &mut self,
+        channel: russh::Channel<russh::server::Msg>,
+        socket_path: &str,
+        _session: &mut server::Session,
+    ) -> std::result::Result<bool, Self::Error> {
+        let Some(handler) = self.runtime.direct_streamlocal_handler.as_ref() else {
+            let _ = channel.close().await;
+            return Ok(false);
+        };
+        let username = match &self.username {
+            Some(u) => u.clone(),
+            None => {
+                let _ = channel.close().await;
+                return Ok(false);
+            }
+        };
+        let ctx = DirectStreamLocalContext {
+            session_id: self.session_id,
+            username,
+            socket_path: socket_path.to_owned(),
+            server: self.runtime.handle.clone(),
+        };
+        match handler(ctx).await {
+            Ok(true) => Ok(true),
+            Ok(false) => {
+                let _ = channel.close().await;
+                Ok(false)
+            }
+            Err(e) => {
+                let _ = channel.close().await;
+                Err(ServerRuntimeError::HighLevel(e))
+            }
+        }
     }
 }
 

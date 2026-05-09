@@ -56,6 +56,6 @@ pub use sftp::SftpServerHandler;
 #[cfg(feature = "sftp")]
 pub use sftp::{SftpClient, SftpDir, SftpDirEntry, SftpFile, SftpMetadata, SftpOpenMode};
 #[cfg(feature = "shell")]
-pub use shell::{Shell, ShellBuilder, ShellHandle, Subsystem, SubsystemBuilder};
+pub use shell::{Shell, ShellAsyncIo, ShellBuilder, ShellHandle, Subsystem, SubsystemBuilder};
 #[cfg(feature = "tunnel")]
-pub use tunnel::{DirectTcpBuilder, Tunnel, TunnelBuilder, TunnelStream};
+pub use tunnel::{DirectStreamLocalBuilder, DirectTcpBuilder, Tunnel, TunnelBuilder, TunnelStream};

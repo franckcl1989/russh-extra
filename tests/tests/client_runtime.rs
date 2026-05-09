@@ -766,7 +766,9 @@ async fn local_forwarding_round_trips_data() {
         .await
         .unwrap();
 
-    let mut stream = TcpStream::connect(tunnel.bound_addr()).await.unwrap();
+    let mut stream = TcpStream::connect(tunnel.bound_addr().unwrap())
+        .await
+        .unwrap();
     stream.write_all(b"pong").await.unwrap();
     stream.shutdown().await.unwrap();
 

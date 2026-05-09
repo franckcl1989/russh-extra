@@ -3,6 +3,7 @@
 //! Public types for file handles, directory entries, metadata,
 //! and open modes used by the `SftpClient` and `SftpServerHandler` APIs.
 
+use std::collections::VecDeque;
 use std::fmt;
 
 use crate::sftp::packet::SftpFileAttrs as PacketAttrs;
@@ -93,6 +94,7 @@ pub struct SftpDir {
     handle: String,
     client: crate::sftp::client::SftpClientRuntime,
     closed: bool,
+    pending_entries: VecDeque<SftpDirEntry>,
 }
 
 impl SftpDir {
@@ -101,6 +103,7 @@ impl SftpDir {
             handle,
             client,
             closed: false,
+            pending_entries: VecDeque::new(),
         }
     }
 
@@ -113,7 +116,17 @@ impl SftpDir {
     ///
     /// Returns `Ok(None)` at end of directory.
     pub async fn read(&mut self) -> crate::Result<Option<SftpDirEntry>> {
-        self.client.readdir_entry(&self.handle).await
+        if let Some(entry) = self.pending_entries.pop_front() {
+            return Ok(Some(entry));
+        }
+        let batch = self.client.readdir_batch(&self.handle).await?;
+        if batch.is_empty() {
+            return Ok(None);
+        }
+        let mut entries = VecDeque::from(batch);
+        let first = entries.pop_front();
+        self.pending_entries = entries;
+        Ok(first)
     }
 
     /// Closes the remote directory handle.
@@ -216,6 +229,29 @@ pub struct SftpMetadata {
 }
 
 impl SftpMetadata {
+    /// Creates a new `SftpMetadata` with the given field values.
+    ///
+    /// All fields are optional; `None` means "not set" and will be
+    /// excluded from wire-level attributes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        size: Option<u64>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        permissions: Option<u32>,
+        accessed: Option<u64>,
+        modified: Option<u64>,
+    ) -> Self {
+        Self {
+            size,
+            uid,
+            gid,
+            permissions,
+            accessed,
+            modified,
+        }
+    }
+
     pub(crate) fn from_packet(attrs: PacketAttrs) -> Self {
         Self {
             size: attrs.size,
@@ -305,6 +341,20 @@ impl SftpMetadata {
     pub fn with_uid_gid(mut self, uid: u32, gid: u32) -> Self {
         self.uid = Some(uid);
         self.gid = Some(gid);
+        self
+    }
+
+    /// Sets the last access time (Unix timestamp).
+    #[must_use]
+    pub fn with_accessed(mut self, accessed: u64) -> Self {
+        self.accessed = Some(accessed);
+        self
+    }
+
+    /// Sets the last modification time (Unix timestamp).
+    #[must_use]
+    pub fn with_modified(mut self, modified: u64) -> Self {
+        self.modified = Some(modified);
         self
     }
 }

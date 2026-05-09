@@ -109,9 +109,9 @@ impl SftpClient {
         self.runtime()?.opendir(path).await
     }
 
-    /// Reads the next directory entry.
+    /// Reads the next directory entry from a directory handle.
     pub async fn readdir(&self, dir: &mut SftpDir) -> Result<Option<SftpDirEntry>> {
-        self.runtime()?.readdir_entry(dir.handle()).await
+        dir.read().await
     }
 
     /// Closes a directory handle.
