@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 /// Direction of an SSH forwarding request.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ForwardDirection {
@@ -90,6 +91,7 @@ impl From<PathBuf> for StreamLocalSpec {
 }
 
 /// High-level forwarding specification.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ForwardSpec {

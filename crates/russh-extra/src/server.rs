@@ -2015,7 +2015,10 @@ impl HighLevelRusshHandler {
         let (stdin_tx, stdin_rx) = mpsc::unbounded_channel::<Bytes>();
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<StreamingExecCmd>();
 
-        self.stdin_txs.lock().unwrap().insert(channel, stdin_tx);
+        self.stdin_txs
+            .lock()
+            .expect("stdin_txs lock not poisoned")
+            .insert(channel, stdin_tx);
 
         let env = self.env_vars.get(&channel).cloned().unwrap_or_default();
 
@@ -2080,6 +2083,7 @@ impl HighLevelRusshHandler {
                                     .await;
                             }
                             CommandExit::Missing => {}
+                            _ => {}
                         }
                         break;
                     }
@@ -2279,7 +2283,10 @@ impl server::Handler for HighLevelRusshHandler {
         _session: &mut server::Session,
     ) -> std::result::Result<(), ServerRuntimeError> {
         self.open_sessions = self.open_sessions.saturating_sub(1);
-        self.stdin_txs.lock().unwrap().remove(&channel);
+        self.stdin_txs
+            .lock()
+            .expect("stdin_txs lock not poisoned")
+            .remove(&channel);
         self.env_vars.remove(&channel);
         #[cfg(feature = "sftp")]
         if let Some(sftp) = &mut self.sftp {
@@ -2293,7 +2300,10 @@ impl server::Handler for HighLevelRusshHandler {
         channel: ChannelId,
         _session: &mut server::Session,
     ) -> std::result::Result<(), ServerRuntimeError> {
-        self.stdin_txs.lock().unwrap().remove(&channel);
+        self.stdin_txs
+            .lock()
+            .expect("stdin_txs lock not poisoned")
+            .remove(&channel);
         Ok(())
     }
 
@@ -2313,7 +2323,12 @@ impl server::Handler for HighLevelRusshHandler {
             return Ok(());
         }
 
-        if let Some(tx) = self.stdin_txs.lock().unwrap().get(&channel) {
+        if let Some(tx) = self
+            .stdin_txs
+            .lock()
+            .expect("stdin_txs lock not poisoned")
+            .get(&channel)
+        {
             let _ = tx.send(Bytes::copy_from_slice(data));
         }
         #[cfg(not(feature = "sftp"))]
@@ -2924,6 +2939,7 @@ fn send_exec_response(
             session.exit_signal_request(channel, russh::Sig::Custom(signal), false, "", "")?;
         }
         CommandExit::Missing => {}
+        _ => {}
     }
 
     session.eof(channel)?;

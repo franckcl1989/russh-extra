@@ -141,10 +141,11 @@ async fn silent_server_connect_timeout_returns_typed_timeout() {
         .username("demo")
         .password("demo")
         .accept_any_host_key()
-        .timeouts(Timeouts {
-            connect: Duration::from_millis(50),
-            ..Timeouts::default()
-        })
+        .timeouts(Timeouts::new(
+            Duration::from_millis(50),
+            Duration::from_secs(30),
+            Duration::from_secs(10),
+        ))
         .build()
         .connect()
         .await

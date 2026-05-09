@@ -693,10 +693,21 @@ impl client::Handler for ClientHandler {
     ) -> std::result::Result<(), Self::Error> {
         match &self.x11_display {
             Some(display_path) => {
-                let path = display_path.clone();
-                tokio::spawn(async move {
-                    forward_x11_channel(channel, path).await;
-                });
+                #[cfg(feature = "tunnel")]
+                {
+                    let path = display_path.clone();
+                    tokio::spawn(async move {
+                        forward_x11_channel(channel, path).await;
+                    });
+                }
+                #[cfg(not(feature = "tunnel"))]
+                {
+                    let _ = display_path;
+                    tracing::warn!(
+                        "received X11 channel but tunnel feature is not enabled; closing",
+                    );
+                    let _ = channel.close().await;
+                }
             }
             None => {
                 let _ = channel.close().await;
@@ -710,7 +721,7 @@ impl client::Handler for ClientHandler {
         channel: russh::Channel<russh::client::Msg>,
         _session: &mut russh::client::Session,
     ) -> std::result::Result<(), Self::Error> {
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "tunnel"))]
         {
             if let Ok(socket_path) = std::env::var("SSH_AUTH_SOCK") {
                 tokio::spawn(async move {
@@ -737,6 +748,7 @@ impl client::Handler for ClientHandler {
     }
 }
 
+#[cfg(feature = "tunnel")]
 async fn forward_x11_channel(channel: russh::Channel<russh::client::Msg>, display_path: PathBuf) {
     #[cfg(unix)]
     {
@@ -1108,6 +1120,7 @@ fn host_key_policy_accepts(policy: &HostKeyPolicy, server_public_key: &PublicKey
                 .iter()
                 .any(|fingerprint| fingerprint.value() == actual)
         }
+        _ => false,
     }
 }
 
@@ -1249,6 +1262,7 @@ async fn authenticate_configured(
                     }
                 }
             }
+            _ => continue,
         }
 
         if success {
@@ -1415,6 +1429,10 @@ async fn try_publickey_auth(
         Identity::Agent => Err(Error::authentication_kind(
             AuthenticationErrorKind::Unavailable,
             "SSH agent authentication is not available; enable the `agent` feature",
+        )),
+        _ => Err(Error::authentication_kind(
+            AuthenticationErrorKind::Unavailable,
+            "unsupported identity type",
         )),
     }
 }
@@ -1779,6 +1797,7 @@ impl From<String> for RemoteCommand {
 }
 
 /// Captured command output.
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CommandOutput {
     /// Process exit information.
@@ -1790,6 +1809,15 @@ pub struct CommandOutput {
 }
 
 impl CommandOutput {
+    /// Creates a new `CommandOutput`.
+    pub fn new(exit: CommandExit, stdout: impl Into<Bytes>, stderr: impl Into<Bytes>) -> Self {
+        Self {
+            exit,
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        }
+    }
+
     /// Returns whether the command succeeded.
     pub fn success(&self) -> bool {
         self.exit.success()

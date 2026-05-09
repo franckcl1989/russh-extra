@@ -218,6 +218,7 @@ impl SftpDirEntry {
 }
 
 /// File metadata returned by stat/lstat/fstat.
+#[non_exhaustive]
 #[derive(Clone, Debug, Default)]
 pub struct SftpMetadata {
     size: Option<u64>,

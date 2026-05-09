@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub const DEFAULT_COMMAND_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 
 /// High-level SSH channel kind.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum ChannelKind {
@@ -24,6 +25,7 @@ pub enum ChannelKind {
 }
 
 /// Remote command exit information.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CommandExit {
@@ -36,6 +38,7 @@ pub enum CommandExit {
 }
 
 /// Captured output limits for buffered command execution.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CommandLimits {

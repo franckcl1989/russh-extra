@@ -74,11 +74,7 @@ fn forwarding_specs_keep_public_metadata() {
 
 #[test]
 fn command_output_success_uses_typed_exit() {
-    let output = CommandOutput {
-        exit: CommandExit::status(0),
-        stdout: Default::default(),
-        stderr: Default::default(),
-    };
+    let output = CommandOutput::new(CommandExit::status(0), vec![], vec![]);
 
     assert!(output.success());
 }

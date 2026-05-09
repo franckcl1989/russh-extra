@@ -47,7 +47,6 @@ changes may occur without a new major version.
 
 - Added `agent` feature flag (`agent = ["client"]`) for SSH agent
   authentication through `$SSH_AUTH_SOCK` on Unix platforms.
-  enums via `CategoryError<K>`.
 - Client connect API: `Client::builder()`, `ClientBuilder`, `Client::connect()`.
 - Password authentication with configurable credential order.
 - Host-key policy: `Strict` (default), `InsecureAcceptAny` (explicit opt-out),

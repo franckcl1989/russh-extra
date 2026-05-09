@@ -5,6 +5,7 @@ use std::time::Duration;
 use crate::{Credential, Endpoint, Error, HostKeyErrorKind, Identity, Result, Username};
 
 /// Host-key verification policy.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub enum HostKeyPolicy {
@@ -36,6 +37,7 @@ impl HostKeyPolicy {
 }
 
 /// Pinned host-key fingerprint.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct HostKeyFingerprint {
@@ -66,6 +68,7 @@ impl HostKeyFingerprint {
 }
 
 /// Host-key fingerprint algorithm.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum HostKeyFingerprintAlgorithm {
@@ -74,6 +77,7 @@ pub enum HostKeyFingerprintAlgorithm {
 }
 
 /// Client connection configuration.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClientConfig {
@@ -186,6 +190,7 @@ impl Default for ClientConfig {
 }
 
 /// Server configuration.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServerConfig {
@@ -242,6 +247,7 @@ impl Default for ServerConfig {
 }
 
 /// Timeout configuration.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Timeouts {
@@ -263,7 +269,19 @@ impl Default for Timeouts {
     }
 }
 
+impl Timeouts {
+    /// Creates new timeout configuration.
+    pub fn new(connect: Duration, auth: Duration, channel_open: Duration) -> Self {
+        Self {
+            connect,
+            auth,
+            channel_open,
+        }
+    }
+}
+
 /// Keepalive configuration.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Keepalive {

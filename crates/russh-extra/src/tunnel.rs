@@ -121,6 +121,7 @@ impl TunnelBuilder {
                 ForwardDirection::Remote => {
                     start_remote_forward(handle, remote_forwards, bind, target, self.timeouts).await
                 }
+                _ => Err(Error::unsupported("unsupported forwarding direction")),
             },
             ForwardSpec::StreamLocal {
                 direction,
@@ -149,7 +150,9 @@ impl TunnelBuilder {
                     )
                     .await
                 }
+                _ => Err(Error::unsupported("unsupported forwarding direction")),
             },
+            _ => Err(Error::unsupported("unsupported forwarding specification")),
         }
     }
 }
@@ -426,7 +429,11 @@ async fn start_remote_forward(
 
     let bound = format!("{}:{}", remote_host, allocated_port)
         .parse()
-        .unwrap_or_else(|_| format!("0.0.0.0:{}", allocated_port).parse().unwrap());
+        .unwrap_or_else(|_| {
+            format!("0.0.0.0:{allocated_port}")
+                .parse()
+                .expect("0.0.0.0:{port} must parse as SocketAddr for a valid u16 port")
+        });
 
     let (close_tx, close_rx) = oneshot::channel::<()>();
     let cancel_host = remote_host.clone();

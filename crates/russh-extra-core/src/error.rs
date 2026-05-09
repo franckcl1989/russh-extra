@@ -98,6 +98,7 @@ where
 }
 
 /// Transport failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum TransportErrorKind {
     /// DNS resolution failed.
@@ -117,6 +118,7 @@ pub enum TransportErrorKind {
 }
 
 /// Host-key verification failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum HostKeyErrorKind {
     /// Host key is unknown to the configured policy.
@@ -132,6 +134,7 @@ pub enum HostKeyErrorKind {
 }
 
 /// Authentication failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum AuthenticationErrorKind {
     /// Credentials were rejected.
@@ -147,6 +150,7 @@ pub enum AuthenticationErrorKind {
 }
 
 /// Channel failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ChannelErrorKind {
     /// Channel open failed.
@@ -166,6 +170,7 @@ pub enum ChannelErrorKind {
 }
 
 /// SFTP failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SftpErrorKind {
     /// Remote SFTP status response indicated failure (SSH_FX_* code).
@@ -183,6 +188,7 @@ pub enum SftpErrorKind {
 }
 
 /// Forwarding failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ForwardingErrorKind {
     /// Local or remote bind failed.
@@ -206,6 +212,7 @@ pub enum ForwardingErrorKind {
 }
 
 /// High-level operation category used by timeout, cancellation, and disconnects.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Operation {
     /// Establishing a client connection.
@@ -231,6 +238,7 @@ pub enum Operation {
 }
 
 /// Lower-level SSH failure category.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SshErrorKind {
     /// Error came from `russh`.
@@ -261,6 +269,7 @@ pub type DisconnectedError = CategoryError<Operation>;
 pub type SshError = CategoryError<SshErrorKind>;
 
 /// Error type used by `russh-extra`.
+#[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// A builder or parser received invalid configuration.

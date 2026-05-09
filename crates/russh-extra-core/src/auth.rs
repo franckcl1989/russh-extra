@@ -77,6 +77,7 @@ impl From<String> for Password {
 }
 
 /// SSH identity material.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Eq, PartialEq)]
 pub enum Identity {
@@ -252,6 +253,7 @@ pub type KeyboardInteractiveHandler = Arc<
 >;
 
 /// Authentication credential.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone)]
 pub enum Credential {
