@@ -474,12 +474,18 @@ fn validate_known_hosts_permissions(path: &Path) -> Result<()> {
 fn expand_tilde(path: &Path) -> PathBuf {
     if let Some(path_str) = path.to_str()
         && (path_str == "~" || path_str.starts_with("~/"))
-        && let Ok(home) = std::env::var("HOME")
     {
-        if path_str == "~" {
-            return PathBuf::from(home);
+        #[cfg(target_os = "windows")]
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
+        #[cfg(not(target_os = "windows"))]
+        let home = std::env::var("HOME");
+
+        if let Ok(home) = home {
+            if path_str == "~" {
+                return PathBuf::from(home);
+            }
+            return PathBuf::from(home).join(&path_str[2..]);
         }
-        return PathBuf::from(home).join(&path_str[2..]);
     }
 
     path.to_path_buf()
@@ -1134,9 +1140,22 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    fn home_dir() -> Option<String> {
+        #[cfg(target_os = "windows")]
+        {
+            std::env::var("HOME")
+                .or_else(|_| std::env::var("USERPROFILE"))
+                .ok()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::env::var("HOME").ok()
+        }
+    }
+
     #[test]
     fn tilde_expansion_to_home() {
-        let home = std::env::var("HOME").unwrap();
+        let home = home_dir().expect("HOME or USERPROFILE not set");
         let result = expand_tilde(std::path::Path::new("~/.ssh/known_hosts"));
 
         assert_eq!(
@@ -1147,7 +1166,7 @@ mod tests {
 
     #[test]
     fn tilde_alone_expands_to_home() {
-        let home = std::env::var("HOME").unwrap();
+        let home = home_dir().expect("HOME or USERPROFILE not set");
         let result = expand_tilde(std::path::Path::new("~"));
 
         assert_eq!(result, std::path::PathBuf::from(&home));
