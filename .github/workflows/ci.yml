@@ -25,6 +25,7 @@ jobs:
           toolchain: ${{ env.RUST_STABLE_VERSION }}
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo check
@@ -56,6 +57,7 @@ jobs:
           toolchain: ${{ env.RUST_STABLE_VERSION }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo clippy
@@ -76,6 +78,7 @@ jobs:
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
       - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo check
@@ -99,6 +102,7 @@ jobs:
         with:
           toolchain: ${{ env.RUST_STABLE_VERSION }}
       - uses: Swatinem/rust-cache@v2
+        continue-on-error: true
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo test
