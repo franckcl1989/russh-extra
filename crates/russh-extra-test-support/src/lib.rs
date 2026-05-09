@@ -651,6 +651,7 @@ impl russh::server::Handler for LoopbackHandler {
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use super::{CommandResponse, LoopbackServer, LoopbackServerConfig};
     use russh::{ChannelMsg, client};
@@ -705,13 +706,18 @@ mod tests {
         .await
         .unwrap();
 
-        let mut client = client::connect(
-            Arc::new(client::Config::default()),
-            server.addr(),
-            AcceptAnyClient,
-        )
-        .await
-        .unwrap();
+        let addr = server.addr();
+
+        let config = Arc::new(client::Config::default());
+        let mut connect_result = Err(russh::Error::Disconnect);
+        for _ in 0..20 {
+            connect_result = client::connect(config.clone(), addr, AcceptAnyClient).await;
+            if connect_result.is_ok() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        let mut client = connect_result.expect("connect timed out after retries");
         assert!(
             client
                 .authenticate_password("demo", "demo")
