@@ -55,6 +55,7 @@ cargo check -p russh-extra --no-default-features --features known-hosts,aws-lc-r
 cargo check -p russh-extra --no-default-features --features shell,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features tunnel,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features sftp,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features server,sftp,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features client,ring
 cargo doc --workspace --all-features --no-deps
 ```

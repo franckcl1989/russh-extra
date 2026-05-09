@@ -18,12 +18,13 @@ local layers over public `russh` APIs.
 
 ## Current Focus
 
-1. Keep the charter, constraints, roadmap, design docs, and AI-agent prompts
-   coherent.
-2. Harden the implemented client, server, shell, known-hosts, and forwarding
-   runtime slices with additional edge-case tests, examples, and concurrency
-   stress tests.
-3. Specify and implement the native SFTP packet foundation.
+1. Prepare the 0.1.0 release candidate by keeping public claims aligned with
+   implemented behavior.
+2. Harden the implemented client, server, shell, known-hosts, SFTP, and
+   forwarding runtime slices with additional edge-case tests, examples, and
+   concurrency stress tests.
+3. Keep lower-level `russh` escape-hatch gaps documented until first-class
+   high-level wrappers exist.
 
 ## Foundation
 
@@ -118,7 +119,9 @@ Design: [Server API](design/server-api.md)
   and `StreamingExecContext.env` with `env()` accessor.
 - Implemented: env var propagation integration tests (single var, streaming,
   empty, and multiple vars per channel).
-- Draft: channel lifecycle hooks, SFTP server integration.
+- Implemented: SFTP server handler registration and runtime dispatch through
+  `SftpServerHandler`.
+- Draft: channel lifecycle hooks.
 
 ## Known Hosts
 
@@ -143,7 +146,7 @@ Design: [Channels and Shells](design/channels-shells.md)
 
 ## Native SFTP
 
-Status: Implementing
+Status: Implemented
 Design: [Native SFTP Layer](design/native-sftp.md)
 
 - Implemented: SFTP v3 client with open, read, write, close, stat, lstat,
@@ -151,11 +154,13 @@ Design: [Native SFTP Layer](design/native-sftp.md)
   `read_to_vec`, `write_all`, and Drop auto-close.
 - Implemented: packet encoding/decoding, request pipelining via oneshot
   channels, status code mapping, and attribute round-trip.
+- Implemented: server-side `SftpServerHandler` trait, packet decoder, response
+  encoder, and runtime dispatch for the SFTP v3 request set.
 - Implemented: loopback SFTP integration tests (open/read/write/stat/
   opendir+readdir/remove/rename/mkdir+rmdir/symlink+readlink/canonicalize/
   drop-auto-close).
-- Reserved: `SftpServer` marker type; the `sftp` feature is excluded from
-  `full` until the server handler has real runtime behaviour.
+- Implemented: server handler integration tests via an in-memory SFTP handler.
+- Deferred: SFTP v4+ protocol extensions and OpenSSH SFTP extensions.
 
 ## Forwarding and Tunnels
 
@@ -169,11 +174,10 @@ Design: [Forwarding and Tunnels](design/forwarding-tunnels.md)
 - Implemented: remote forwarding with `tcpip-forward` global request, port allocation, and `forwarded-tcpip` channel handling via `ClientHandler` callback.
 - Implemented: server-side forwarding authorization hooks on `ServerBuilder` and `ServerHandler` trait.
 - Implemented: `TcpipForwardContext`, `DirectTcpipContext`, `ForwardedTcpipContext` context types.
-- Implemented: direct TCP and local forwarding loopback integration tests.
-- Deferred: streamlocal forwarding.
+- Implemented: direct TCP, local forwarding, and remote forwarding loopback integration tests.
+- Implemented: StreamLocal API and Unix-domain forwarding paths where supported by `russh`.
 - Deferred: dynamic SOCKS-style forwarding.
-- Pending hardening: remote forwarding integration tests and cancellation
-  edge cases.
+- Pending hardening: StreamLocal loopback tests and cancellation edge cases.
 
 ## Testing
 

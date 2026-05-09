@@ -53,6 +53,33 @@ async fn client_connects_and_runs_buffered_command() {
 }
 
 #[tokio::test]
+async fn auth_banner_returns_server_banner_after_connect() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .auth_banner("authorized use only"),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo")
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        session.auth_banner().await.as_deref(),
+        Some("authorized use only")
+    );
+}
+
+#[tokio::test]
 async fn client_accepts_pinned_sha256_host_key() {
     init_tracing();
     let server = LoopbackServer::start(

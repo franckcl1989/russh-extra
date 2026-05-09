@@ -230,6 +230,7 @@ impl Client {
     pub async fn connect(&self) -> Result<Session> {
         let endpoint = self.config.endpoint().clone();
         let addrs = (endpoint.host().to_owned(), endpoint.port());
+        let auth_banner_text = Arc::new(Mutex::new(None));
         let handler = ClientHandler::new(
             self.config.host_key_policy().clone(),
             #[cfg(feature = "known-hosts")]
@@ -245,6 +246,7 @@ impl Client {
             #[cfg(feature = "tunnel")]
             self.remote_streamlocal_forwards.clone(),
             self.x11_display.clone(),
+            auth_banner_text.clone(),
             self.cert_credentials.clone(),
         );
 
@@ -256,8 +258,7 @@ impl Client {
         .map_err(|_| Error::timeout(Operation::Connect, "client connection timed out"))?
         .map_err(map_connect_error)?;
 
-        let auth_banner =
-            authenticate_configured(&mut handle, &self.config, &self.cert_credentials).await?;
+        authenticate_configured(&mut handle, &self.config, &self.cert_credentials).await?;
 
         Ok(Session {
             id: SessionId::next(),
@@ -268,7 +269,7 @@ impl Client {
             remote_forwards: self.remote_forwards.clone(),
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards: self.remote_streamlocal_forwards.clone(),
-            auth_banner_text: auth_banner,
+            auth_banner_text,
         })
     }
 }
@@ -510,6 +511,7 @@ impl ClientHandler {
         #[cfg(feature = "tunnel")]
         remote_streamlocal_forwards: crate::tunnel::RemoteStreamLocalForwardMap,
         x11_display: Option<PathBuf>,
+        auth_banner_text: Arc<Mutex<Option<String>>>,
         cert_credentials: Vec<CertificateCredential>,
     ) -> Self {
         Self {
@@ -527,7 +529,7 @@ impl ClientHandler {
             #[cfg(feature = "tunnel")]
             remote_streamlocal_forwards,
             x11_display,
-            auth_banner_text: Arc::new(Mutex::new(None)),
+            auth_banner_text,
             cert_credentials,
         }
     }
@@ -1139,7 +1141,7 @@ async fn authenticate_configured(
     handle: &mut client::Handle<ClientHandler>,
     config: &ClientConfig,
     cert_credentials: &[CertificateCredential],
-) -> Result<Arc<Mutex<Option<String>>>> {
+) -> Result<()> {
     let username = config
         .username()
         .ok_or_else(|| {
@@ -1266,7 +1268,7 @@ async fn authenticate_configured(
         }
 
         if success {
-            return Ok(Arc::new(Mutex::new(None)));
+            return Ok(());
         }
     }
 
@@ -1302,7 +1304,7 @@ async fn authenticate_configured(
         .map_err(map_auth_error)?;
 
         match result {
-            AuthResult::Success => return Ok(Arc::new(Mutex::new(None))),
+            AuthResult::Success => return Ok(()),
             AuthResult::Failure {
                 partial_success, ..
             } => saw_partial |= partial_success,

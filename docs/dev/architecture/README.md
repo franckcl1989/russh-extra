@@ -1,7 +1,9 @@
 # russh-extra Architecture Overview
 
 `russh-extra` is a high-level async SSH API for Rust built on top of the
-official `russh` crate.
+official `russh` crate. It covers the main client, server, shell, SFTP, and
+forwarding workflows, while leaving lower-level `russh` controls reachable
+through explicit escape hatches.
 
 The project does not wrap community SSH or SFTP helper crates. Higher-level
 client sessions, server handlers, SFTP, shells, and tunnels are implemented in
@@ -11,13 +13,12 @@ requests.
 ## Project Structure
 
 The repository is a Cargo workspace with separate crates for public API,
-shared contracts, macros, and tests.
+shared contracts, and tests.
 
 | Crate | Purpose |
 |---|---|
 | `russh-extra` | User-facing API for clients, servers, channels, SFTP, shells, and tunnels |
 | `russh-extra-core` | Shared types: config, auth, endpoints, channel metadata, forwarding specs, errors |
-| `russh-extra-macros` | Future proc-macros for typed handlers and routing |
 | `russh-extra-test-support` | Integration test helpers and local SSH fixtures |
 | `russh-extra-tests` | Workspace-level API and integration tests |
 
@@ -39,13 +40,8 @@ handles while preserving SSH concepts:
 - `Server` accepts connections and dispatches authentication and channel
   requests to user handlers.
 - `Shell` and `Tunnel` are typed high-level handles over `russh` channels.
-  `SftpClient` is reserved for the native SFTP runtime and remains a marker type
-  until packet handling is implemented.
-
-### Macros
-
-Macros are optional ergonomics. They should generate calls into normal Rust APIs
-instead of hiding runtime behavior inside macro-only code paths.
+- `SftpClient` and `SftpServerHandler` implement SFTP v3 over the SSH `sftp`
+  subsystem.
 
 ## Protocol Ownership
 

@@ -205,9 +205,8 @@ do nothing.
   `ShellHandle`, and `SubsystemBuilder`.
 - `server` exposes `shell_request()`, `pty_request()`, `subsystem_request()`,
   `env_request()`, `window_change_request()` on `ServerHandler`.
-- `sftp` currently depends on `client` and exposes reserved experimental SFTP
-  marker types. The high-level SFTP runtime will use subsystem channels when
-  implemented.
+- `sftp` depends on `client` and exposes the native SFTP runtime. It uses
+  subsystem channels and is specified in the native SFTP design.
 - `russh-extra --no-default-features --features shell,aws-lc-rs` compiles.
 
 ## Edge cases
@@ -293,8 +292,9 @@ command execution with buffered capture.
 A standalone `subsystem` feature flag. Declined: subsystem is a channel type,
 not a separate SSH protocol. It reuses the same channel lifecycle as shell
 and command. The `shell` feature enables both shells and generic subsystems.
-The current `sftp` feature is reserved for the native packet layer and exposes
-experimental marker types until runtime SFTP behavior is implemented.
+The `sftp` feature is reserved for the native packet layer rather than generic
+subsystem transport. Runtime SFTP behavior is specified in the native SFTP
+design.
 
 ## Out of scope
 

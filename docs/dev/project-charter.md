@@ -1,7 +1,7 @@
 # Project Charter
 
-`russh-extra` is an AI-driven Rust workspace for building a complete
-high-level async SSH API directly on top of the official `russh` crate.
+`russh-extra` is an AI-driven Rust workspace for building a broad high-level
+async SSH API directly on top of the official `russh` crate.
 
 The repository is the project memory. Goals, design decisions, constraints,
 test requirements, and implementation status must be captured in files in this
@@ -9,8 +9,10 @@ repository instead of relying on chat history.
 
 ## Goal
 
-Build a full-featured SSH API layer that makes common SSH workflows concise
-while preserving the SSH concepts exposed by `russh`.
+Build a full-featured SSH API layer for common SSH workflows while preserving
+the SSH concepts exposed by `russh`. The high-level API is not expected to hide
+or mirror every low-level `russh` hook; unsupported advanced workflows should
+remain reachable through explicit escape hatches.
 
 The public API should cover:
 

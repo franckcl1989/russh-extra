@@ -122,21 +122,21 @@ Done when:
 
 ### Phase 5: Shells, SFTP, and Tunnels
 
-Status: Implementing.
+Status: Implemented for the 0.1.0 scope.
 
 Done when:
 
 - Channel/shell and forwarding designs match the implemented runtime and test
   coverage.
-- Native SFTP has an Accepted design before file-operation runtime work starts.
+- Native SFTP has an Implemented design and runtime coverage for client and
+  server handler paths.
 - Each implemented feature has local integration tests, negative tests, and
   feature-gating checks.
 
 ## Immediate Backlog
 
-1. Add more forwarding lifecycle tests, especially remote forwarding cancel and
+1. Add more forwarding lifecycle tests, especially StreamLocal and cancellation
    error paths.
-2. Decide whether to implement native SFTP packet framing or keep the `sftp`
-   feature reserved with marker types for the next release.
+2. Add hashed and wildcard known-hosts matching.
 3. Expand known-hosts tests for file save/load, permission errors, revoked
    entries, and malformed lines.

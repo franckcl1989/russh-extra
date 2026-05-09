@@ -23,13 +23,13 @@ ring = ["_russh", "russh/ring"]
 rsa = ["_russh", "russh/rsa"]
 serde = ["russh-extra-core/serde"]
 server = ["_russh"]
-sftp = ["client"]
+sftp = ["client", "dep:async-trait"]
 shell = ["client"]
 tunnel = ["client", "server"]
 full = ["client", "server", "shell", "tunnel", "known-hosts", "agent", "sftp", "aws-lc-rs", "flate2", "rsa"]
 
 [dependencies]
-async-trait.workspace = true
+async-trait = { workspace = true, optional = true }
 base64.workspace = true
 bytes.workspace = true
 rand.workspace = true

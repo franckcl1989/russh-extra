@@ -27,8 +27,8 @@ listing, and metadata operations without leaving the `russh-extra` API surface.
 
 ### Public API shape
 
-Users open SFTP from a connected `Session`. The current marker type is replaced
-with a fully functional `SftpClient`:
+Users open SFTP from a connected `Session`. The pre-runtime marker type was
+replaced with a fully functional `SftpClient`:
 
 ```rust
 let session = client.connect().await?;
@@ -138,7 +138,7 @@ SFTP errors flow through the existing `Error::Sftp(SftpErrorKind)` variant in
 | `ChannelIo` | SSH channel read/write failure |
 | `UnexpectedResponse` | Response received for unknown request ID |
 | `UnsupportedVersion` | Server does not support SFTP v3 |
-| `Unsupported` | Feature not yet implemented |
+| `Unsupported` | Unsupported SFTP operation or extension |
 
 The `Error::Sftp` variant carries a `SftpError` with a `kind()` accessor and an
 optional `status_code: u32` field for `RemoteStatus` kinds. Server status codes

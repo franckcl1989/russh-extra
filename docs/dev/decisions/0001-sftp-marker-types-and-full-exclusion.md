@@ -1,6 +1,12 @@
 # ADR 0001: SFTP Marker Types and `full` Exclusion
 
-Status: Accepted
+Status: Superseded
+
+Superseded by: [Native SFTP Layer](../design/native-sftp.md)
+
+This ADR recorded the pre-runtime SFTP policy. It is retained for historical
+context only. The current implementation exposes a native SFTP v3 client and
+server handler, and `sftp` is included in `full`.
 
 ## Context
 
@@ -41,8 +47,8 @@ stable public API would violate the project's honesty constraint.
 - Users who read the API surface will see SFTP types but must check the docs
   to understand they are reserved.
 - The `full` feature set accurately reflects what is implemented today.
-- When SFTP runtime is ready, this ADR should be superseded and `sftp` added
-  to `default` and/or `full` as appropriate.
+- The SFTP runtime now exists, so this ADR no longer describes the active
+  feature policy.
 
 ## Alternatives Considered
 

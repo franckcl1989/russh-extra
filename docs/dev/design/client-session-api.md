@@ -221,9 +221,8 @@ No third-party SSH protocol crate is involved.
   `CommandLimits`, `CommandOutput`, host-key policy types, and raw-handle guard
   types.
 - `shell` depends on `client` and exposes `Session::shell()`.
-- `sftp` exposes reserved experimental SFTP marker types; `Session::sftp()` is
-  available when both `client` and `sftp` are enabled and currently returns
-  `Error::Unsupported`.
+- `sftp` depends on `client` and exposes the native SFTP v3 client runtime via
+  `Session::sftp()`.
 - `tunnel` depends on `client` and `server` because forwarding has client and
   server protocol surfaces.
 - `russh-extra --no-default-features` must compile.

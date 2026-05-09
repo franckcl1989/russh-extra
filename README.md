@@ -4,9 +4,14 @@ High-level async SSH APIs for Rust, built directly on top of
 [`russh`](https://docs.rs/russh).
 
 `russh-extra` provides ergonomic client, server, authentication, known-hosts,
-command execution, shell, subsystem, and TCP forwarding APIs without requiring
+command execution, shell, subsystem, SFTP, and forwarding APIs without requiring
 application code to manage low-level `russh` handlers and channel messages for
 common workflows.
+
+The 0.1 line targets the main high-level SSH workflows. It is not a complete
+wrapper for every low-level `russh` hook or control method; advanced users can
+use the raw `russh` handle escape hatch when a workflow is not yet represented
+by the high-level API.
 
 This crate is not an official russh project.
 
@@ -445,7 +450,7 @@ logged or exposed in `Debug` output. See [`SECURITY.md`](SECURITY.md) and
 
 This repository is pre-1.0 and AI-driven.
 
-Implemented and covered by local tests:
+Implemented in this release candidate:
 
 - Client connect with password, private-key, agent, and keyboard-interactive authentication.
 - Strict, pinned SHA256, and known-hosts host-key verification.
@@ -460,8 +465,13 @@ Implemented and covered by local tests:
 - OpenSSH certificate authentication (certificate + private key pairs).
 - Authentication banner display and server-side banner configuration.
 - Structured tracing spans on connect, command, disconnect, and server run entry points.
-- Typed error taxonomy and local loopback test fixtures (200 tests).
+- Typed error taxonomy and local loopback test fixtures.
 - 14 example programs covering client, server, shell, subsystem, known-hosts, SFTP, and forwarding workflows.
+
+Primary client, server, SFTP, and TCP forwarding paths are covered by local
+loopback integration tests. Some advanced Unix StreamLocal paths have
+implementation coverage and remain a hardening target for additional runtime
+tests.
 
 Not yet implemented:
 
@@ -469,6 +479,10 @@ Not yet implemented:
 - Wildcard hostname known-hosts matching.
 - Dynamic SOCKS-style forwarding.
 - SFTP v4+ extensions.
+- First-class high-level wrappers for every `russh` control surface. Current
+  gaps include some low-level client controls such as rekey/keepalive/ping and
+  no-more-sessions requests, and lower-level server hooks such as signal and DH
+  GEX group lookup.
 
 ## Examples
 

@@ -10,7 +10,7 @@ Use this prompt when starting a new Codex session for general project work:
 
 ```text
 You are working in russh-extra, an AI-driven Rust workspace that builds a
-complete high-level async SSH API directly on official russh APIs. Read
+broad high-level async SSH API directly on official russh APIs. Read
 AGENTS.md, docs/dev/project-charter.md, docs/dev/constraints.md,
 docs/dev/development-plan.md, docs/dev/security.md, docs/dev/roadmap.md, and
 any relevant design docs before editing.

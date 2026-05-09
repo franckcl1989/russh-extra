@@ -70,8 +70,9 @@ Before publishing a release:
 - [ ] `cargo clippy --workspace --all-features -- -D warnings` passes.
 - [ ] `cargo test --workspace --all-features` passes.
 - [ ] `cargo doc --workspace --all-features --no-deps` passes.
-- [ ] `cargo package --workspace --allow-dirty` passes during pre-release
-      validation, or each publishable package is checked individually.
+- [ ] Each publishable package is checked individually with `cargo package`.
+      The workspace package command is not a release gate because
+      `russh-extra-test-support` and `russh-extra-tests` are `publish = false`.
 - [ ] Feature-gating checks from `docs/dev/testing.md` pass.
 - [ ] README examples match implemented behavior.
 - [ ] README and crate documentation examples are compiled or explicitly marked
@@ -80,3 +81,18 @@ Before publishing a release:
       and residual risks.
 - [ ] Security-sensitive behavior is documented.
 - [ ] Release notes list public API changes and known limitations.
+
+## Publishing Order
+
+Publish packages in dependency order:
+
+```bash
+cargo package -p russh-extra-core
+cargo publish -p russh-extra-core
+cargo package -p russh-extra
+cargo publish -p russh-extra
+```
+
+`russh-extra` depends on `russh-extra-core = "0.1.0"`, so the core crate must
+be available in the crates.io index before packaging or publishing the
+user-facing crate without a path override.

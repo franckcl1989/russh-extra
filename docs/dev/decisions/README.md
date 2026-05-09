@@ -37,6 +37,6 @@ Superseded.
 
 | Number | Title | Status |
 |--------|-------|--------|
-| 0001 | [SFTP Marker Types and `full` Exclusion](./0001-sftp-marker-types-and-full-exclusion.md) | Accepted |
+| 0001 | [SFTP Marker Types and `full` Exclusion](./0001-sftp-marker-types-and-full-exclusion.md) | Superseded |
 | 0002 | [AI-Only Operating Model: No Human Gate, Independent Audit](./0002-ai-only-no-human-gate-independent-audit.md) | Accepted |
 | 0003 | [Feature Flag Naming Conventions](./0003-feature-flag-naming.md) | Accepted |

@@ -53,4 +53,6 @@ or misleading as the crate matures.
   hyphens in feature names (`known-hosts` not `known_hosts`).
 - **Grouped prefixes** (`ssh-client`, `ssh-server`): Rejected as unnecessary
   verbosity; the crate name already implies SSH.
-- **Include `sftp` in `full` with marker types**: Rejected (see ADR 0001).
+- **Include `sftp` in `full` before runtime support existed**: Rejected by
+  ADR 0001. The SFTP runtime is now implemented, so `sftp` is included in
+  `full` under the active feature policy.

@@ -121,6 +121,7 @@ impl Drop for LoopbackServer {
 pub struct LoopbackServerConfig {
     username: String,
     password: String,
+    auth_banner: Option<String>,
     authorized_keys: Vec<(String, russh::keys::ssh_key::PublicKey)>,
     commands: HashMap<String, CommandResponse>,
     streaming_commands: HashMap<String, StreamingCommandConfig>,
@@ -138,6 +139,7 @@ impl LoopbackServerConfig {
         Self {
             username: "test".to_owned(),
             password: "test".to_owned(),
+            auth_banner: None,
             authorized_keys: Vec::new(),
             commands: HashMap::new(),
             streaming_commands: HashMap::new(),
@@ -154,6 +156,12 @@ impl LoopbackServerConfig {
     pub fn password(mut self, username: impl Into<String>, password: impl Into<String>) -> Self {
         self.username = username.into();
         self.password = password.into();
+        self
+    }
+
+    /// Sets the authentication banner sent before user authentication.
+    pub fn auth_banner(mut self, banner: impl Into<String>) -> Self {
+        self.auth_banner = Some(banner.into());
         self
     }
 
@@ -268,6 +276,7 @@ impl fmt::Debug for LoopbackServerConfig {
         f.debug_struct("LoopbackServerConfig")
             .field("username", &self.username)
             .field("password", &"***")
+            .field("has_auth_banner", &self.auth_banner.is_some())
             .field("authorized_key_count", &self.authorized_keys.len())
             .field("commands", &self.commands)
             .field("streaming_commands", &self.streaming_commands)
@@ -448,6 +457,10 @@ impl russh::server::Handler for LoopbackHandler {
         } else {
             Ok(Auth::reject())
         }
+    }
+
+    async fn authentication_banner(&mut self) -> Result<Option<String>, Self::Error> {
+        Ok(self.state.auth_banner.clone())
     }
 
     async fn auth_publickey(

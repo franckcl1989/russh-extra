@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-05-09
 
 ### Changed
 
@@ -20,6 +20,8 @@ changes may occur without a new major version.
   the type name.
 - `sftp` feature now included in `full` feature set (client and server SFTP
   runtimes are implemented and tested).
+- `async-trait` is now an optional dependency enabled by the `sftp` feature
+  instead of being pulled into default client-only builds.
 - License changed from MIT-only to MIT OR Apache-2.0 (added `LICENSE-APACHE`
   file, updated `Cargo.toml` workspace metadata).
 - `SftpClientRuntime` no longer stores a redundant `session_id` field.
@@ -37,6 +39,8 @@ changes may occur without a new major version.
 - Removed all `#[allow(dead_code)]` annotations in `sftp/packet.rs` (now
   all SFTP constants and functions are used by client or server).
 - Timeout parameter names corrected (`_timeouts`) in tunnel forwarding functions.
+- Fixed `Session::auth_banner()` so it returns the authentication banner
+  captured by the active `russh` client handler during authentication.
 
 ### Removed
 
@@ -79,7 +83,7 @@ changes may occur without a new major version.
   workflow.
 - Design documents: error taxonomy, client session API, loopback test
   fixtures, server API, public key+agent authentication, known hosts,
-  channels/shells, native SFTP (Draft), and forwarding/tunnels.
+  channels/shells, native SFTP, and forwarding/tunnels.
 - Feature flags: `client`, `server`, `shell`, `sftp`, `tunnel`, `agent`,
   `known-hosts`, `aws-lc-rs`, `ring`, `flate2`, `rsa`, `serde`, `full`.
 - Examples: `client_exec`, `client_exec_password`, `client_known_hosts`,
@@ -208,7 +212,8 @@ changes may occur without a new major version.
   `agent_request_handler()` on `ServerBuilder`, and `ServerHandler`
   trait method `agent_request()`.
 - OpenSSH certificate authentication: `CertificateCredential` type with
-  `load(key_path, cert_path)` and `from_parts(private_key, certificate)`.
+  `from_openssh_files(key_path, cert_path)` and
+  `from_openssh_data(private_key, certificate)`.
   `ClientBuilder::certificate()`. Server-side `auth_openssh_certificate()`
   on `ServerBuilder`, `ServerHandler` trait method.
 - Authentication banner: `Session::auth_banner()` returns the server
