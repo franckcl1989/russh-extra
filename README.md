@@ -450,7 +450,7 @@ logged or exposed in `Debug` output. See [`SECURITY.md`](SECURITY.md) and
 
 This repository is pre-1.0 and AI-driven.
 
-Implemented in this release candidate:
+Implemented in the 0.1 line:
 
 - Client connect with password, private-key, agent, and keyboard-interactive authentication.
 - Strict, pinned SHA256, and known-hosts host-key verification.
@@ -555,8 +555,9 @@ and implementation status:
 - `docs/dev/security.md` and `docs/dev/release.md` define security and compatibility rules.
 - `docs/dev/roadmap.md` tracks accepted work.
 - `docs/dev/design/` contains guide-level design docs for non-trivial public API changes.
-- `.agents/skills/` and `.claude/skills/` contain local development skills.
+- `.agents/skills/` contains local development skills.
 
 ## License
 
-This project is licensed under the MIT license.
+This project is licensed under either the MIT license or the Apache License,
+Version 2.0.

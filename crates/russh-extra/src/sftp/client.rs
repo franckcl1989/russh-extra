@@ -130,13 +130,16 @@ impl SftpClientRuntime {
     async fn expect_handle(&self, packet: Vec<u8>, id: u32) -> Result<String> {
         match self.send_and_await(packet, id).await? {
             SftpResponse::Handle(handle) => Ok(handle),
-            SftpResponse::Status(code, msg) => Err(Error::sftp(
-                SftpErrorKind::RemoteStatus,
-                format!(
-                    "SFTP {} (code {code}): {msg}",
-                    packet::status_code_name(code)
-                ),
-            )),
+            SftpResponse::Status(code, msg) => {
+                let kind = packet::sftp_error_kind_for_code(code);
+                Err(Error::sftp(
+                    kind,
+                    format!(
+                        "SFTP {} (code {code}): {msg}",
+                        packet::status_code_name(code)
+                    ),
+                ))
+            }
             other => Err(Error::sftp(
                 SftpErrorKind::Protocol,
                 format!("expected handle, got: {other:?}"),

@@ -12,6 +12,7 @@ architecture, and roadmap docs.
 - [AI Development Workflow](./ai-workflow.md)
 - [Testing Strategy](./testing.md)
 - [Development Plan](./development-plan.md)
+- [0.1.1 Development Plan](./0.1.1-development-plan.md)
 - [Security Policy](./security.md)
 - [Release and Compatibility Policy](./release.md)
 

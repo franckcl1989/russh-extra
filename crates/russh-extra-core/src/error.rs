@@ -185,6 +185,10 @@ pub enum SftpErrorKind {
     UnsupportedVersion,
     /// Feature not yet implemented.
     Unsupported,
+    /// File or directory not found (SSH_FX_NO_SUCH_FILE).
+    NoSuchFile,
+    /// Insufficient permissions (SSH_FX_PERMISSION_DENIED).
+    PermissionDenied,
 }
 
 /// Forwarding failure category.

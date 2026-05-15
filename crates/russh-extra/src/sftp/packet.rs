@@ -267,9 +267,19 @@ pub(crate) fn check_status(status_code: u32, message: &str) -> Result<()> {
         Ok(())
     } else {
         Err(Error::sftp(
-            SftpErrorKind::RemoteStatus,
+            sftp_error_kind_for_code(status_code),
             format!("SFTP error code {status_code}: {message}"),
         ))
+    }
+}
+
+pub(crate) fn sftp_error_kind_for_code(code: u32) -> SftpErrorKind {
+    match code {
+        SSH_FX_NO_SUCH_FILE => SftpErrorKind::NoSuchFile,
+        SSH_FX_PERMISSION_DENIED => SftpErrorKind::PermissionDenied,
+        SSH_FX_BAD_MESSAGE => SftpErrorKind::Protocol,
+        SSH_FX_OP_UNSUPPORTED => SftpErrorKind::Unsupported,
+        _ => SftpErrorKind::RemoteStatus,
     }
 }
 

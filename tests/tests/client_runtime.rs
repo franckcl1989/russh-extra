@@ -11,6 +11,8 @@ use russh_extra_test_support::{
     generate_test_key_pair, init_tracing,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+#[cfg(unix)]
+use tokio::net::UnixStream;
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::test]
@@ -394,10 +396,11 @@ async fn agent_auth_returns_unavailable_when_env_not_set() {
         }
         Err(Error::Authentication(auth)) if auth.kind() == AuthenticationErrorKind::Unavailable => {
         }
+        Err(Error::Authentication(auth)) if auth.kind() == AuthenticationErrorKind::Exhausted => {
+            // When agent is the only credential and no agent socket is
+            // available, the credential is exhausted.
+        }
         Err(other) => {
-            // If there's no agent, the key is not configured, so the agent
-            // tries and fails with Unavailable. The credential is exhausted
-            // since agent was the only credential.
             panic!("unexpected error: {other:?}");
         }
     }
@@ -509,6 +512,11 @@ async fn known_hosts_revoked_entry_returns_rejected_error() {
         format!("@revoked {} ssh-ed25519 {key_b64}\n", addr.host()),
     )
     .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
 
     let known_hosts = KnownHosts::load(&path).unwrap();
     assert_eq!(known_hosts.entry_count(), 1);
@@ -731,8 +739,7 @@ async fn direct_tcp_round_trips_data_over_channel() {
     let server = LoopbackServer::start(
         LoopbackServerConfig::new()
             .password("demo", "demo")
-            .accept_direct_tcpip()
-            .accept_shell(),
+            .accept_direct_tcpip(),
     )
     .await
     .unwrap();
@@ -756,9 +763,45 @@ async fn direct_tcp_round_trips_data_over_channel() {
     stream.write_all(b"ping").await.unwrap();
 
     let mut buf = [0; 4];
-    let n = stream.read(&mut buf).await.unwrap();
+    stream.read_exact(&mut buf).await.unwrap();
 
-    assert_eq!(n, 4);
+    assert_eq!(&buf, b"ping");
+    stream.close().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn direct_streamlocal_round_trips_data_over_channel() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_direct_streamlocal(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let mut stream = session
+        .direct_streamlocal("/tmp/russh-extra-direct.sock")
+        .open()
+        .await
+        .unwrap();
+
+    stream.write_all(b"ping").await.unwrap();
+
+    let mut buf = [0; 4];
+    stream.read_exact(&mut buf).await.unwrap();
+
     assert_eq!(&buf, b"ping");
     stream.close().await.unwrap();
 }
@@ -769,8 +812,7 @@ async fn local_forwarding_round_trips_data() {
     let server = LoopbackServer::start(
         LoopbackServerConfig::new()
             .password("demo", "demo")
-            .accept_direct_tcpip()
-            .accept_shell(),
+            .accept_direct_tcpip(),
     )
     .await
     .unwrap();
@@ -797,6 +839,54 @@ async fn local_forwarding_round_trips_data() {
     let mut stream = TcpStream::connect(tunnel.bound_addr().unwrap())
         .await
         .unwrap();
+    stream.write_all(b"pong").await.unwrap();
+    stream.shutdown().await.unwrap();
+
+    let mut buf = [0; 4];
+    stream.read_exact(&mut buf).await.unwrap();
+
+    assert_eq!(&buf, b"pong");
+    tunnel.close().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_streamlocal_forwarding_round_trips_data() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_direct_streamlocal(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let bind_path = dir.path().join("local.sock");
+
+    let tunnel = session
+        .tunnel(ForwardSpec::local_streamlocal(
+            bind_path.clone(),
+            "/tmp/russh-extra-target.sock",
+        ))
+        .start()
+        .await
+        .unwrap();
+
+    assert_eq!(tunnel.bound_addr(), None);
+    assert_eq!(tunnel.bound_path(), Some(bind_path.as_path()));
+
+    let mut stream = UnixStream::connect(&bind_path).await.unwrap();
     stream.write_all(b"pong").await.unwrap();
     stream.shutdown().await.unwrap();
 
@@ -954,6 +1044,84 @@ async fn remote_forwarding_close_sends_cancel() {
     tunnel.close().await.unwrap();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn remote_streamlocal_forwarding_succeeds_when_server_accepts() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_streamlocal_forward(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let bind_path = dir.path().join("remote.sock");
+    let target_path = dir.path().join("target.sock");
+
+    let tunnel = session
+        .tunnel(ForwardSpec::remote_streamlocal(
+            bind_path.clone(),
+            target_path.clone(),
+        ))
+        .start()
+        .await
+        .unwrap();
+
+    assert_eq!(tunnel.bound_addr(), None);
+    assert_eq!(tunnel.bound_path(), Some(bind_path.as_path()));
+    assert!(
+        matches!(tunnel.spec(), ForwardSpec::StreamLocal { direction, .. } if *direction == russh_extra::ForwardDirection::Remote)
+    );
+
+    tunnel.close().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn remote_streamlocal_forwarding_fails_when_server_denies() {
+    init_tracing();
+    let server = LoopbackServer::start(LoopbackServerConfig::new().password("demo", "demo"))
+        .await
+        .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let error = session
+        .tunnel(ForwardSpec::remote_streamlocal(
+            dir.path().join("remote.sock"),
+            dir.path().join("target.sock"),
+        ))
+        .start()
+        .await
+        .unwrap_err();
+
+    let Error::Forwarding(fwd) = error else {
+        panic!("expected forwarding error");
+    };
+    assert_eq!(fwd.kind(), ForwardingErrorKind::GlobalRequest);
+}
+
 #[tokio::test]
 async fn direct_tcp_stream_send_eof_then_close() {
     init_tracing();
@@ -992,8 +1160,7 @@ async fn tunnel_abort_does_not_panic() {
     let server = LoopbackServer::start(
         LoopbackServerConfig::new()
             .password("demo", "demo")
-            .accept_direct_tcpip()
-            .accept_shell(),
+            .accept_direct_tcpip(),
     )
     .await
     .unwrap();
@@ -1026,8 +1193,7 @@ async fn tunnel_close_is_idempotent() {
     let server = LoopbackServer::start(
         LoopbackServerConfig::new()
             .password("demo", "demo")
-            .accept_direct_tcpip()
-            .accept_shell(),
+            .accept_direct_tcpip(),
     )
     .await
     .unwrap();
@@ -1052,6 +1218,91 @@ async fn tunnel_close_is_idempotent() {
         .unwrap();
 
     tunnel.close().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn streamlocal_tunnel_close_cleans_up_socket() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_direct_streamlocal(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let bind_path = dir.path().join("cleanup.sock");
+
+    let tunnel = session
+        .tunnel(ForwardSpec::local_streamlocal(
+            bind_path.clone(),
+            "/tmp/russh-extra-cleanup-target.sock",
+        ))
+        .start()
+        .await
+        .unwrap();
+
+    assert_eq!(tunnel.bound_path(), Some(bind_path.as_path()));
+    assert!(bind_path.exists(), "socket should exist before close");
+
+    tunnel.close().await.unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !bind_path.exists(),
+        "socket should be cleaned up after close"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn streamlocal_tunnel_abort_does_not_panic() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_direct_streamlocal(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let dir = tempfile::tempdir().unwrap();
+    let bind_path = dir.path().join("abort.sock");
+
+    let tunnel = session
+        .tunnel(ForwardSpec::local_streamlocal(
+            bind_path.clone(),
+            "/tmp/russh-extra-abort-target.sock",
+        ))
+        .start()
+        .await
+        .unwrap();
+
+    tunnel.abort();
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 }
 
 #[tokio::test]

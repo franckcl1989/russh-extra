@@ -18,17 +18,16 @@ local layers over public `russh` APIs.
 
 ## Current Focus
 
-1. Prepare the 0.1.0 release candidate by keeping public claims aligned with
-   implemented behavior.
-2. Harden the implemented client, server, shell, known-hosts, SFTP, and
-   forwarding runtime slices with additional edge-case tests, examples, and
-   concurrency stress tests.
-3. Keep lower-level `russh` escape-hatch gaps documented until first-class
-   high-level wrappers exist.
+1. `0.1.1` hardening release is complete (see
+   [0.1.1 Development Plan](0.1.1-development-plan.md) and
+   [audit note](audits/2026-05-15-release-0.1.1.md)).
+2. Prepare `0.2` planning: hashed known-hosts matching, wildcard matching,
+   dynamic SOCKS forwarding, SFTP v4+ extensions, split read/write halves.
+3. Keep deferred features tracked in the roadmap sections below.
 
 ## Foundation
 
-Status: Implementing
+Status: Implemented
 Docs:
 [Project Charter](project-charter.md),
 [Development Constraints](constraints.md),
@@ -43,20 +42,12 @@ Design: [Error Taxonomy](design/error-taxonomy.md)
   feature checks, and basic test support.
 - Implemented: typed error taxonomy for SSH negotiation, auth, channel,
   command, SFTP, forwarding, cancellation, and remote disconnect failures.
-- Draft: tracing conventions for connections, sessions, channels, and transfer
-  IDs.
-
-Done when:
-
-- Public API work cannot land without an Accepted design or a documented
-  small-change exception.
-- CI covers formatting, clippy, tests, MSRV, and feature-gating combinations.
-- Local networking tests do not depend on external SSH hosts.
-- The current phase gate in `docs/dev/development-plan.md` is accurate.
+- Implemented: tracing conventions for connections, sessions, channels, and
+  transfer IDs.
 
 ## Client API
 
-Status: Implementing
+Status: Implemented (first runtime slice)
 Design: [Client Session API](design/client-session-api.md)
 
 - Implemented: client builder with endpoint, username, credentials, host-key
@@ -73,17 +64,21 @@ Design: [Client Session API](design/client-session-api.md)
   platforms. Non-Unix platforms return `AuthenticationErrorKind::Unavailable`.
 - Implemented: known-hosts store integration and trust-on-first-use in memory.
 - Implemented: shell and subsystem entry points from connected sessions.
-- Implementing: TCP forwarding runtime and additional forwarding tests.
-- Draft: native SFTP packet/runtime layer and split streaming command handles.
+- Implemented: native SFTP v3 client runtime and server handler integration.
+- Implemented: TCP and StreamLocal forwarding runtime.
+- Implemented: StreamLocal loopback integration tests (close socket cleanup, abort no-panic).
+- Implemented: known-hosts edge-case tests (wildcard, hashed, malformed, hash_hostnames doc).
+- Implemented: SFTP server error-to-status-code mapping with typed SftpErrorKind propagation.
 
-Next implementation work:
+Next implementation work (deferred beyond 0.1):
 
-- Add more known-hosts save/load and revoked-key tests.
-- Add more forwarding lifecycle and remote forwarding tests.
+- Hashed known-hosts matching/writing and wildcard matching.
+- Dynamic SOCKS-style forwarding.
+- SFTP v4+ protocol extensions.
 
 ## Server API
 
-Status: Implementing
+Status: Implemented (first runtime slice)
 Design: [Server API](design/server-api.md)
 
 - Implemented: first runtime slice with bind address, required host keys,
@@ -121,11 +116,10 @@ Design: [Server API](design/server-api.md)
   empty, and multiple vars per channel).
 - Implemented: SFTP server handler registration and runtime dispatch through
   `SftpServerHandler`.
-- Draft: channel lifecycle hooks.
 
 ## Known Hosts
 
-Status: Implementing
+Status: Implemented (first runtime slice)
 Design: [Known Hosts](design/known-hosts.md)
 
 - Implemented: `KnownHosts::load()`, `KnownHosts::save()`,
@@ -141,8 +135,11 @@ Design: [Channels and Shells](design/channels-shells.md)
 
 - Implemented: `ShellBuilder`, `Shell::open()`, `ShellHandle` read/write,
   PTY request, env requests, resize, signal, close, and subsystem channel open.
+- Implemented: `ShellAsyncIo` wrapper for `tokio::io::AsyncRead` and
+  `AsyncWrite` integration.
 - Implemented: server shell, PTY, subsystem, env, and window-change hooks.
-- Deferred: split read/write halves and `AsyncRead`/`AsyncWrite` trait impls.
+- Deferred: split read/write halves and direct `AsyncRead`/`AsyncWrite` trait
+  impls on `ShellHandle`.
 
 ## Native SFTP
 
@@ -164,7 +161,7 @@ Design: [Native SFTP Layer](design/native-sftp.md)
 
 ## Forwarding and Tunnels
 
-Status: Implementing
+Status: Implemented (first runtime slice, StreamLocal hardening pending)
 Design: [Forwarding and Tunnels](design/forwarding-tunnels.md)
 
 - Implemented: `TunnelBuilder` from `Session::tunnel()` for local and remote TCP forwarding.
@@ -177,11 +174,10 @@ Design: [Forwarding and Tunnels](design/forwarding-tunnels.md)
 - Implemented: direct TCP, local forwarding, and remote forwarding loopback integration tests.
 - Implemented: StreamLocal API and Unix-domain forwarding paths where supported by `russh`.
 - Deferred: dynamic SOCKS-style forwarding.
-- Pending hardening: StreamLocal loopback tests and cancellation edge cases.
 
 ## Testing
 
-Status: Implementing
+Status: Implemented
 Docs: [Testing Strategy](testing.md)
 Design: [Loopback Test Fixtures](design/loopback-test-fixtures.md)
 
@@ -195,8 +191,7 @@ Design: [Loopback Test Fixtures](design/loopback-test-fixtures.md)
 - Implemented: known-hosts accept-new and changed-key integration tests.
 - Implemented: shell/PTY and subsystem open integration tests.
 - Implemented: direct TCP and local forwarding integration tests.
-- Draft: protocol-level SFTP packet tests.
-- Draft: API compile tests for builder ergonomics and macro output.
+- Implemented: protocol-level SFTP packet encoding and decoding tests.
 - Implemented: CI on Linux, macOS, and Windows.
 
 ## Macros

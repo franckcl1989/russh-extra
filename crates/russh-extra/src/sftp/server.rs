@@ -543,8 +543,33 @@ impl SftpServerRuntime {
 
 /// Convert a handler error into an SFTP status response.
 fn sftp_error_status(id: u32, error: &Error) -> Vec<u8> {
-    // TODO: map specific error kinds to SFTP status codes
-    // (NO_SUCH_FILE, PERMISSION_DENIED, etc.)
-    let _ = error;
-    packet::encode_status_response(id, packet::SSH_FX_FAILURE, &format!("{error}"))
+    let (code, message) = sftp_status_from_error(error);
+    packet::encode_status_response(id, code, &message)
+}
+
+fn sftp_status_from_error(error: &Error) -> (u32, String) {
+    if let Error::Sftp(sftp_err) = error {
+        let (code, default_msg) = match sftp_err.kind() {
+            SftpErrorKind::NoSuchFile => (packet::SSH_FX_NO_SUCH_FILE, "no such file"),
+            SftpErrorKind::PermissionDenied => {
+                (packet::SSH_FX_PERMISSION_DENIED, "permission denied")
+            }
+            SftpErrorKind::Unsupported => (packet::SSH_FX_OP_UNSUPPORTED, "unsupported operation"),
+            SftpErrorKind::Protocol => (packet::SSH_FX_BAD_MESSAGE, "protocol error"),
+            SftpErrorKind::UnsupportedVersion => (packet::SSH_FX_FAILURE, "unsupported version"),
+            SftpErrorKind::ChannelIo => (packet::SSH_FX_FAILURE, "channel I/O error"),
+            SftpErrorKind::RemoteStatus => (packet::SSH_FX_FAILURE, "internal error"),
+            SftpErrorKind::UnexpectedResponse => (packet::SSH_FX_FAILURE, "internal error"),
+            _ => (packet::SSH_FX_FAILURE, "failure"),
+        };
+        let msg = sftp_err.message();
+        let message = if msg.is_empty() {
+            default_msg.to_string()
+        } else {
+            msg.to_string()
+        };
+        (code, message)
+    } else {
+        (packet::SSH_FX_FAILURE, format!("{error}"))
+    }
 }

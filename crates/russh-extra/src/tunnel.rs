@@ -2,20 +2,23 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use russh::ChannelMsg;
 use russh_extra_core::{
-    Error, ForwardDirection, ForwardSpec, ForwardingErrorKind, Result, SessionId, StreamLocalSpec,
-    TcpEndpoint, Timeouts,
+    ChannelErrorKind, Error, ForwardDirection, ForwardSpec, ForwardingErrorKind, Result, SessionId,
+    StreamLocalSpec, TcpEndpoint, Timeouts,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{Mutex, oneshot};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
 use super::client::ClientHandler;
@@ -515,7 +518,8 @@ async fn start_local_streamlocal_forward(
     let spawn_target = target.clone();
 
     let task = tokio::spawn(async move {
-        run_local_streamlocal_accept_loop(listener, handle, spawn_target, close_rx).await;
+        run_local_streamlocal_accept_loop(listener, bind_path, handle, spawn_target, close_rx)
+            .await;
     });
 
     Ok(Tunnel {
@@ -534,6 +538,7 @@ async fn start_local_streamlocal_forward(
 #[cfg(unix)]
 async fn run_local_streamlocal_accept_loop(
     listener: UnixListener,
+    bind_path: PathBuf,
     handle: Arc<Mutex<russh::client::Handle<ClientHandler>>>,
     target: StreamLocalSpec,
     mut close_rx: oneshot::Receiver<()>,
@@ -565,6 +570,17 @@ async fn run_local_streamlocal_accept_loop(
                 tracing::warn!(error = %e, "local streamlocal forwarding accept error");
             }
         }
+    }
+
+    drop(listener);
+    if let Err(e) = std::fs::remove_file(&bind_path)
+        && e.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %bind_path.display(),
+            error = %e,
+            "failed to remove streamlocal socket after listener shutdown"
+        );
     }
 
     tracing::debug!("local streamlocal forwarding listener stopped");
@@ -771,11 +787,20 @@ impl DirectTcpBuilder {
                 )
             })?;
 
+        let (read_tx, read_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+
+        let _task = tokio::spawn(async move {
+            run_tunnel_stream_bridge(channel, read_tx, cmd_rx).await;
+        });
+
         Ok(TunnelStream {
-            channel,
+            read_rx,
+            cmd_tx,
             read_buf: Vec::new(),
             read_pos: 0,
             closed: false,
+            _task,
         })
     }
 }
@@ -852,12 +877,78 @@ impl DirectStreamLocalBuilder {
                 )
             })?;
 
+        let (read_tx, read_rx) = mpsc::unbounded_channel();
+        let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+
+        let _task = tokio::spawn(async move {
+            run_tunnel_stream_bridge(channel, read_tx, cmd_rx).await;
+        });
+
         Ok(TunnelStream {
-            channel,
+            read_rx,
+            cmd_tx,
             read_buf: Vec::new(),
             read_pos: 0,
             closed: false,
+            _task,
         })
+    }
+}
+
+// ── TunnelStream ──────────────────────────────────────────────────────
+
+// ── Tunnel stream bridge task infrastructure ──────────────────────────
+
+/// Internal command sent to the tunnel bridge task.
+enum TunnelCmd {
+    /// Write data to the channel.
+    Write(Vec<u8>),
+    /// Send EOF on the channel.
+    Eof,
+    /// Close the channel.
+    Close,
+}
+
+/// Background task that bridges the SSH channel with mpsc channels
+/// for [`TunnelStream`].
+///
+/// Reads [`ChannelMsg`] from the channel and forwards data to `read_tx`.
+/// Receives commands from `cmd_rx` and issues them on the channel.
+async fn run_tunnel_stream_bridge(
+    mut channel: russh::Channel<russh::client::Msg>,
+    read_tx: mpsc::UnboundedSender<Vec<u8>>,
+    mut cmd_rx: mpsc::UnboundedReceiver<TunnelCmd>,
+) {
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(ChannelMsg::Data { data })
+                        if read_tx.send(data.to_vec()).is_err() =>
+                    {
+                        break;
+                    }
+                    Some(ChannelMsg::Close) | None => {
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            cmd = cmd_rx.recv() => {
+                match cmd {
+                    Some(TunnelCmd::Write(data)) => {
+                        let _ = channel.data(data.as_slice()).await;
+                    }
+                    Some(TunnelCmd::Eof) => {
+                        let _ = channel.eof().await;
+                    }
+                    Some(TunnelCmd::Close) | None => {
+                        let _ = channel.close().await;
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -865,14 +956,19 @@ impl DirectStreamLocalBuilder {
 
 /// Streaming I/O over a forwarded SSH channel.
 ///
-/// Provides `read` and `write` methods for bidirectional data transfer
-/// through a direct-tcpip, forwarded-tcpip, direct-streamlocal, or
-/// forwarded-streamlocal channel.
+/// Provides [`AsyncRead`] and [`AsyncWrite`] for bidirectional data
+/// transfer through a direct-tcpip, forwarded-tcpip, direct-streamlocal,
+/// or forwarded-streamlocal channel.
+///
+/// All `tokio::io::AsyncReadExt` methods (e.g. `read_exact`,
+/// `read_to_end`, `read_buf`) are available on `TunnelStream`.
 pub struct TunnelStream {
-    channel: russh::Channel<russh::client::Msg>,
+    read_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    cmd_tx: mpsc::UnboundedSender<TunnelCmd>,
     read_buf: Vec<u8>,
     read_pos: usize,
     closed: bool,
+    _task: JoinHandle<()>,
 }
 
 impl fmt::Debug for TunnelStream {
@@ -884,50 +980,11 @@ impl fmt::Debug for TunnelStream {
 }
 
 impl TunnelStream {
-    /// Reads bytes from the channel.
-    ///
-    /// Returns `Ok(0)` when the channel is closed and all buffered
-    /// data has been consumed.
-    pub async fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        if buf.is_empty() {
-            return Ok(0);
-        }
-
-        if self.read_pos < self.read_buf.len() {
-            let remaining = &self.read_buf[self.read_pos..];
-            let n = remaining.len().min(buf.len());
-            buf[..n].copy_from_slice(&remaining[..n]);
-            self.read_pos += n;
-            return Ok(n);
-        }
-
-        if self.closed {
-            return Ok(0);
-        }
-
-        loop {
-            match self.channel.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    let n = data.len().min(buf.len());
-                    buf[..n].copy_from_slice(&data[..n]);
-                    if n < data.len() {
-                        self.read_buf = data.to_vec();
-                        self.read_pos = n;
-                    }
-                    return Ok(n);
-                }
-                Some(ChannelMsg::Close) | None => {
-                    self.closed = true;
-                    return Ok(0);
-                }
-                _ => {}
-            }
-        }
-    }
-
     /// Writes bytes to the channel.
     pub async fn write(&self, data: &[u8]) -> Result<usize> {
-        self.channel.data(data).await.map_err(map_tunnel_error)?;
+        self.cmd_tx
+            .send(TunnelCmd::Write(data.to_vec()))
+            .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "tunnel channel closed"))?;
         Ok(data.len())
     }
 
@@ -939,26 +996,82 @@ impl TunnelStream {
 
     /// Sends EOF on the channel.
     pub async fn send_eof(&self) -> Result<()> {
-        self.channel.eof().await.map_err(map_tunnel_error)?;
+        self.cmd_tx
+            .send(TunnelCmd::Eof)
+            .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "tunnel channel closed"))?;
         Ok(())
     }
 
     /// Closes the channel.
     pub async fn close(self) -> Result<()> {
-        self.channel.close().await.map_err(map_tunnel_error)?;
+        let _ = self.cmd_tx.send(TunnelCmd::Close);
         Ok(())
     }
+}
 
-    /// Returns the underlying `russh` channel.
-    ///
-    /// **Expert**: use this to send custom requests through the channel.
-    pub fn russh_channel(&self) -> &russh::Channel<russh::client::Msg> {
-        &self.channel
+impl AsyncRead for TunnelStream {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        // Serve buffered data first.
+        if self.read_pos < self.read_buf.len() {
+            let remaining = &self.read_buf[self.read_pos..];
+            let n = remaining.len().min(buf.remaining());
+            buf.put_slice(&remaining[..n]);
+            self.read_pos += n;
+            return Poll::Ready(Ok(()));
+        }
+
+        // If the bridge task has stopped sending (channel closed), signal EOF.
+        if self.closed {
+            return Poll::Ready(Ok(()));
+        }
+
+        // Poll the mpsc receiver for the next data chunk from the bridge task.
+        match self.read_rx.poll_recv(cx) {
+            Poll::Ready(Some(data)) => {
+                let n = data.len().min(buf.remaining());
+                buf.put_slice(&data[..n]);
+                if n < data.len() {
+                    self.read_buf = data;
+                    self.read_pos = n;
+                }
+                Poll::Ready(Ok(()))
+            }
+            Poll::Ready(None) => {
+                // Bridge task dropped the sender — channel is closed.
+                self.closed = true;
+                Poll::Ready(Ok(()))
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+impl AsyncWrite for TunnelStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        self.cmd_tx
+            .send(TunnelCmd::Write(buf.to_vec()))
+            .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "tunnel channel closed"))?;
+        Poll::Ready(Ok(buf.len()))
     }
 
-    /// Returns the underlying `russh` channel (mutable access).
-    pub fn russh_channel_mut(&mut self) -> &mut russh::Channel<russh::client::Msg> {
-        &mut self.channel
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let _ = self.cmd_tx.send(TunnelCmd::Eof);
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -1074,14 +1187,5 @@ pub(crate) async fn copy_bidirectional_with_unix_path(
             );
             let _ = channel.close().await;
         }
-    }
-}
-
-fn map_tunnel_error(e: russh::Error) -> Error {
-    match e {
-        russh::Error::RequestDenied => {
-            Error::forwarding(ForwardingErrorKind::GlobalRequest, "SSH request denied")
-        }
-        e => Error::ssh_with_source("tunnel I/O error", e),
     }
 }

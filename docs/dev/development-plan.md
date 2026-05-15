@@ -40,11 +40,10 @@ Agents may work on:
 Agents must not implement these as durable public runtime APIs while the
 relevant design remains Draft:
 
-- Native SFTP packet runtime and high-level file APIs.
-- Streamlocal forwarding runtime.
 - Dynamic SOCKS-style forwarding runtime.
-- Split shell/tunnel read/write halves and `AsyncRead`/`AsyncWrite` trait impls
-  for high-level handles.
+- Split shell/tunnel read/write halves and direct `AsyncRead`/`AsyncWrite`
+  trait impls for high-level handles beyond the implemented `ShellAsyncIo`
+  wrapper.
 - New public escape hatches to lower-level `russh` handles outside the
   implemented client raw-handle guard and accepted server host-key/context
   handles.
@@ -59,7 +58,7 @@ the repository docs, code, and verification results satisfy the gate.
 
 ### Phase 0: Repository Foundation
 
-Status: Implementing.
+Status: Completed.
 
 Done when:
 
@@ -114,20 +113,20 @@ Status: Completed for the first server runtime slice.
 
 Done when:
 
-- Server API design is Implementing and aligned with the implemented runtime
-  slices.
+- Server API design is Implemented (first runtime slice) and aligned with the
+  implemented runtime slices.
 - Server can authenticate, route commands, reject unauthorized requests, and
   shut down predictably.
 - Client and server loopback tests cover both sides.
 
 ### Phase 5: Shells, SFTP, and Tunnels
 
-Status: Implemented for the 0.1.0 scope.
+Status: Implemented for the 0.1 line scope.
 
 Done when:
 
-- Channel/shell and forwarding designs match the implemented runtime and test
-  coverage.
+- Channel/shell and forwarding designs are Implemented (first runtime slice)
+  and match the implemented runtime and test coverage.
 - Native SFTP has an Implemented design and runtime coverage for client and
   server handler paths.
 - Each implemented feature has local integration tests, negative tests, and
@@ -135,8 +134,15 @@ Done when:
 
 ## Immediate Backlog
 
-1. Add more forwarding lifecycle tests, especially StreamLocal and cancellation
-   error paths.
-2. Add hashed and wildcard known-hosts matching.
-3. Expand known-hosts tests for file save/load, permission errors, revoked
-   entries, and malformed lines.
+The version-specific `0.1.1` scope is completed. Remaining work is tracked in
+[`0.1.1 Development Plan`](0.1.1-development-plan.md) and the deferred items in
+[`roadmap.md`](roadmap.md).
+
+1. Documentation reconciliation and governance drift fix — completed in 0.1.1.
+2. Forwarding lifecycle tests (StreamLocal close/abort, TCP cancellation) —
+   completed in 0.1.1.
+3. Known-hosts edge-case tests — completed in 0.1.1.
+4. SFTP server handler error-to-status-code mapping — completed in 0.1.1.
+
+Deferred beyond `0.1.1`: hashed known-hosts matching/writing, wildcard
+known-hosts matching, dynamic SOCKS-style forwarding, and SFTP v4+ extensions.

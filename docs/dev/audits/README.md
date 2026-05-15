@@ -45,3 +45,5 @@ Use the date the audit was completed, and a short scope slug (e.g.
 - [2026-05-08-known-hosts](./2026-05-08-known-hosts.md) — Known hosts design audit (pass)
 - [2026-05-08-public-key-auth](./2026-05-08-public-key-auth.md) — Public key and agent authentication design audit (pass)
 - [2026-05-08-channels-shells](./2026-05-08-channels-shells.md) — Channels and shells design audit (pass)
+- [2026-05-09-release-0.1.0](./2026-05-09-release-0.1.0.md) — 0.1.0 release candidate audit (pass with notes)
+- [2026-05-15-release-0.1.1](./2026-05-15-release-0.1.1.md) — 0.1.1 hardening release audit (pass)

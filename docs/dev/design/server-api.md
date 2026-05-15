@@ -1,6 +1,6 @@
 # Server API
 
-Status: Implementing
+Status: Implemented (first runtime slice)
 Roadmap: `docs/dev/roadmap.md#server-api`
 
 ## Summary
@@ -12,9 +12,9 @@ requests, and shutting down predictably.
 This design is implemented for listener startup, in-memory or loaded host keys,
 password authentication, public-key authentication, keyboard-interactive
 authentication, buffered and streaming exec, shell, PTY, subsystem, forwarding
-authorization, connection lifecycle hooks, and graceful shutdown. It remains
-Implementing while server hardening and deferred lifecycle/SFTP integrations are
-tracked.
+authorization, SFTP handler registration, connection lifecycle hooks, and
+graceful shutdown. It remains Implementing while server hardening and deferred
+lifecycle integrations are tracked.
 
 ## Motivation
 
@@ -429,8 +429,8 @@ the handler future's API idiomatic (plain Rust async methods).
   `StreamingExecCmd`, `CommandExit`, `SessionContext`, and `SessionId`.
 - `server` depends on `_russh`; users that construct host keys from lower-level
   types can access the re-exported `russh` crate when `_russh` is enabled.
-- `server,sftp` does not add SFTP server behavior until the SFTP server design
-  is accepted.
+- `server,sftp` exposes `SftpServerHandler` registration and runtime dispatch
+  through the native SFTP layer.
 - `tunnel` depends on `client` and `server` and exposes forwarding
   authorization hooks. Requests reject by default until user handlers accept
   them.
@@ -489,6 +489,8 @@ work item.
   exec on the same connection.
 - Negative tests for shell, subsystem, PTY, forwarding, and unauthenticated
   session-channel requests returning failure.
+- SFTP server handler tests are covered by the native SFTP design and
+  workspace integration tests.
 - Feature-gating checks for `--no-default-features`,
   `--features server,aws-lc-rs`, and default features.
 - Error-path tests should assert typed errors where the public API returns an
@@ -505,10 +507,9 @@ Provide only macro-based routing. This would hide behavior in generated code
 and make the runtime harder to debug. Macros can be added later as optional
 ergonomics over normal handler APIs.
 
-Start with streaming command handlers. Streaming is useful, but it introduces
-stdin ownership, backpressure, async close-on-drop, cancellation, and output
-ordering questions that should be accepted in a separate design. The first
-server slice returns buffered `ExecResponse` values.
+Provide only streaming command handlers. Rejected because buffered command
+routes are simpler for small servers and test fixtures. The implemented API
+supports both buffered `ExecResponse` routes and streaming handlers.
 
 Generate a production host key by default. This would make insecure defaults
 too easy. Tests can generate in-memory keys explicitly; production servers
@@ -516,12 +517,12 @@ must provide host keys.
 
 ## Open questions
 
-- Deferrable: certificate-based and multi-factor authentication.
+- Deferrable: certificate authority stores and multi-factor composition
+  helpers.
 - Deferrable: persistent authorized-key stores and host-key rotation helpers.
 - Deferrable: streaming exec stdin polling mode (`try_read_stdin()`) for
   non-blocking reads.
 - Deferrable: channel lifecycle hooks (`on_channel_open`, `on_channel_close`).
-- Deferrable: SFTP subsystem server integration.
 - Deferrable: typed routing macros.
 - Deferrable: exposing more raw `russh` session and channel handles after
   ownership rules are proven by implementation.

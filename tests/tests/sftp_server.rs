@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use russh_extra::{
-    AuthDecision, Client, Server, ServerHostKey, SftpMetadata, SftpOpenMode, SftpServerHandler,
+    AuthDecision, Client, Server, ServerHostKey, SftpErrorKind, SftpMetadata, SftpOpenMode,
+    SftpServerHandler,
 };
 use russh_extra_test_support::init_tracing;
 
@@ -55,7 +56,10 @@ impl SftpServerHandler for InMemorySftpHandler {
                 .unwrap()
                 .insert(filename.clone(), Vec::new());
         } else if !self.fs.files.lock().unwrap().contains_key(&filename) {
-            return Err(russh_extra::Error::unsupported("no such file"));
+            return Err(russh_extra::Error::sftp(
+                SftpErrorKind::NoSuchFile,
+                "no such file",
+            ));
         }
 
         self.fs
@@ -332,6 +336,43 @@ async fn sftp_server_read_returns_eof_for_empty_file() {
     let mut file = sftp.open("/empty.txt", SftpOpenMode::READ).await.unwrap();
     let data = file.read(0, 4096).await.unwrap();
     assert!(data.is_empty());
+
+    stop_server(handle, task).await;
+}
+
+#[tokio::test]
+async fn sftp_server_handler_error_kind_propagated() {
+    init_tracing();
+    let handler = InMemorySftpHandler::new();
+    let endpoint = unused_endpoint().await;
+
+    let server = Server::builder()
+        .listen((endpoint.host().to_owned(), endpoint.port()))
+        .host_key(test_host_key())
+        .password_auth(|_ctx, _password| async { Ok(AuthDecision::accept()) })
+        .sftp_handler(handler)
+        .build()
+        .unwrap();
+    let handle = server.handle();
+    let task = tokio::spawn(server.run());
+
+    let session = connect_client(&endpoint, "demo").await.unwrap();
+    let sftp = session.sftp().await.unwrap();
+
+    let result = sftp.open("/nonexistent", SftpOpenMode::READ).await;
+    assert!(result.is_err());
+
+    match result.unwrap_err() {
+        russh_extra::Error::Sftp(err) => {
+            assert_eq!(
+                err.kind(),
+                SftpErrorKind::NoSuchFile,
+                "expected NoSuchFile, got {:?}",
+                err.kind()
+            );
+        }
+        other => panic!("expected Sftp error, got {other:?}"),
+    }
 
     stop_server(handle, task).await;
 }

@@ -6,11 +6,12 @@ Roadmap: `docs/dev/roadmap.md#channels-and-shells`
 ## Summary
 
 `russh-extra` provides typed channel wrappers for interactive shells, PTY
-allocation, and SSH subsystems. Shell API exposes streaming async I/O with
-separate stdin, stdout, and stderr plus resize, signal, and exit status
-observation. PTY configuration uses the existing `Pty` and `TerminalMode`
-types from `russh-extra-core`. Subsystem channels support generic named
-subsystems as well as SFTP.
+allocation, and SSH subsystems. Shell API exposes streaming async I/O plus
+resize, signal, and exit status observation. `ShellHandle::into_async_io()`
+provides a `ShellAsyncIo` wrapper implementing `tokio::io::AsyncRead` and
+`AsyncWrite` for users who need standard Tokio I/O traits. PTY configuration
+uses the existing `Pty` and `TerminalMode` types from `russh-extra-core`.
+Subsystem channels support generic named subsystems as well as SFTP.
 
 ## Motivation
 
@@ -29,8 +30,13 @@ the channel message stream and buffers unread `Data` and `ExtendedData` bytes
 internally. Users call `read()` to drain buffered bytes or await new messages.
 Write operations write directly to the channel via `channel.data()`.
 
-Split read/write halves (`ShellStdin` / `ShellStdout` / `ShellStderr`) are
-deferred to a future design.
+Users who need Tokio trait integration can convert the handle with
+`ShellHandle::into_async_io()`. That conversion moves channel ownership into a
+background bridge task and returns `ShellAsyncIo`, which implements
+`AsyncRead` and `AsyncWrite`.
+
+Split read/write halves (`ShellStdin` / `ShellStdout` / `ShellStderr`) and
+direct trait implementations on `ShellHandle` are deferred to a future design.
 
 ### Error policy
 
@@ -46,9 +52,14 @@ through existing error types. PTY rejection produces a `Channel` error with
 cleanup. `exit()` returns `Option<&CommandExit>` once an exit status or signal
 has been observed.
 
+After conversion to `ShellAsyncIo`, `AsyncWrite::poll_shutdown()` sends EOF to
+the remote channel. Dropping `ShellAsyncIo` closes the command side of the
+bridge task; it does not wait for a remote close.
+
 ### Feature flags
 
-- `shell` (depends on `client`): client-side `Shell`, `ShellBuilder`, `ShellHandle`.
+- `shell` (depends on `client`): client-side `Shell`, `ShellBuilder`,
+  `ShellHandle`, `ShellAsyncIo`, `Subsystem`, and `SubsystemBuilder`.
 - Server-side `shell_request()`, `pty_request()`, `subsystem_request()` always
   available on `ServerHandler` when `server` is enabled.
 - Subsystem client-side types live under the same `shell` feature (subsystem
@@ -104,6 +115,23 @@ let mut buf = [0u8; 1024];
 let n = sftp_channel.read(&mut buf).await?;
 ```
 
+### Tokio AsyncRead and AsyncWrite
+
+```rust
+let mut io = session
+    .shell()
+    .pty(russh_extra::Pty::new("xterm-256color", 120, 40))
+    .build()
+    .open()
+    .await?
+    .into_async_io()
+    .await?;
+
+tokio::io::AsyncWriteExt::write_all(&mut io, b"echo ready\n").await?;
+let mut out = Vec::new();
+tokio::io::AsyncReadExt::read_to_end(&mut io, &mut out).await?;
+```
+
 ## Behavior
 
 ### Happy path
@@ -118,6 +146,16 @@ let n = sftp_channel.read(&mut buf).await?;
 7. `resize()`, `signal()` send window-change and signal messages.
 8. `exit()` returns exit status/signal once the remote process exits.
 9. `close()` closes the channel.
+
+### Async I/O wrapper
+
+1. User calls `ShellHandle::into_async_io().await`.
+2. The handle spawns a bridge task that owns the underlying `russh` channel.
+3. The bridge task forwards channel data to `ShellAsyncIo` reads.
+4. `AsyncWrite` calls send write commands to the bridge task.
+5. `poll_shutdown()` sends channel EOF.
+6. `ShellAsyncIo::resize()` and `ShellAsyncIo::signal()` send control commands
+   through the same bridge.
 
 ### Subsystem opening
 
@@ -149,6 +187,8 @@ let n = sftp_channel.read(&mut buf).await?;
 - `close()` is explicit and returns `Result`.
 - Dropping `ShellHandle` does not block on async cleanup.
 - `exit()` is available after close.
+- Dropping `ShellAsyncIo` is best-effort. The bridge task exits when the
+  command channel or SSH channel closes.
 
 ## Security
 
@@ -176,6 +216,7 @@ variables. No environment variables are set by default.
 | Write EOF | `Channel::eof()` |
 | Read messages | `Channel::wait()` → `ChannelMsg::Data`, `ExtendedData`, `Eof`, `Close`, `ExitStatus`, `ExitSignal`, `Success`, `Failure` |
 | Close channel | `Channel::close()` |
+| Async I/O wrapper | background task owns `Channel<Msg>` and exposes Tokio `AsyncRead`/`AsyncWrite` through mpsc channels |
 
 ### Terminal mode mapping
 
@@ -202,7 +243,7 @@ do nothing.
 - `client` exposes `Session::command()` (existing), `Session::shell()`, and
   `Session::subsystem()`.
 - `shell` depends on `client` and exposes `Shell`, `ShellBuilder`,
-  `ShellHandle`, and `SubsystemBuilder`.
+  `ShellHandle`, `ShellAsyncIo`, `Subsystem`, and `SubsystemBuilder`.
 - `server` exposes `shell_request()`, `pty_request()`, `subsystem_request()`,
   `env_request()`, `window_change_request()` on `ServerHandler`.
 - `sftp` depends on `client` and exposes the native SFTP runtime. It uses
@@ -223,6 +264,10 @@ do nothing.
   channel message stream. Users must call `read()` to advance the stream.
 - `ShellHandle` does not spawn background tasks. Reading and writing happen
   synchronously within async calls.
+- `ShellAsyncIo` does spawn one background bridge task. It terminates when the
+  SSH channel closes or when the command channel is dropped.
+- `ShellAsyncIo` interleaves normal channel data into one `AsyncRead` stream.
+  It is not a split stdout/stderr abstraction.
 
 ## Testing Plan
 
@@ -232,6 +277,7 @@ do nothing.
 - `ShellBuilder` validation: missing host, missing session.
 - `CommandExit::Missing` behavior for shell exit.
 - PTY builder default validation.
+- `ShellAsyncIo` debug redaction and EOF state behavior.
 
 ### Integration tests (client-side)
 
@@ -248,6 +294,7 @@ do nothing.
 - Write after close.
 - Exit status observation after shell close.
 - Concurrent shell and command channels on same session.
+- `ShellHandle::into_async_io()` supports Tokio copy/read/write flows.
 
 ### Integration tests (server-side)
 
@@ -278,8 +325,14 @@ do nothing.
 ### Split read/write halves
 
 `ShellRead` + `ShellWrite` with shared channel ownership via `Arc<Mutex<>>`.
-Declined: adds complexity without clear user benefit. Users who need
-concurrent read/write can spawn tasks and share `Arc<Mutex<ShellHandle>>`.
+Deferred: `ShellAsyncIo` covers the standard Tokio I/O use case without
+stabilizing a more complex split-stream API yet.
+
+### Direct AsyncRead and AsyncWrite on ShellHandle
+
+Rejected for now: `ShellHandle` also exposes shell-specific operations such as
+resize, signal, exit observation, and raw-channel access. The conversion method
+makes the ownership change explicit when users want Tokio trait integration.
 
 ### Separate stdout / stderr reads
 
@@ -309,5 +362,6 @@ SFTP packet behavior and forwarding lifecycle are covered by separate designs.
 - [x] Feature flags and no-default behavior are specified.
 - [x] Tests required for implementation are listed.
 - [x] Channel ownership model is specified.
-- [x] Split I/O and event observation API is specified (deferred).
+- [x] `ShellAsyncIo` ownership and shutdown behavior is specified.
+- [x] Split I/O and direct trait implementation API is specified (deferred).
 - [x] Missing status behavior is specified.

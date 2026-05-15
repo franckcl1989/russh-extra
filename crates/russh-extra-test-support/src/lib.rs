@@ -130,6 +130,8 @@ pub struct LoopbackServerConfig {
     accept_subsystem: String,
     accept_direct_tcpip: bool,
     accept_tcpip_forward: bool,
+    accept_direct_streamlocal: bool,
+    accept_streamlocal_forward: bool,
     sftp_mock: MockSftpServer,
 }
 
@@ -148,6 +150,8 @@ impl LoopbackServerConfig {
             accept_subsystem: String::new(),
             accept_direct_tcpip: false,
             accept_tcpip_forward: false,
+            accept_direct_streamlocal: false,
+            accept_streamlocal_forward: false,
             sftp_mock: MockSftpServer::new(),
         }
     }
@@ -208,6 +212,18 @@ impl LoopbackServerConfig {
     /// Accept tcpip-forward requests.
     pub fn accept_tcpip_forward(mut self) -> Self {
         self.accept_tcpip_forward = true;
+        self
+    }
+
+    /// Accept direct-streamlocal channels.
+    pub fn accept_direct_streamlocal(mut self) -> Self {
+        self.accept_direct_streamlocal = true;
+        self
+    }
+
+    /// Accept streamlocal-forward requests.
+    pub fn accept_streamlocal_forward(mut self) -> Self {
+        self.accept_streamlocal_forward = true;
         self
     }
 
@@ -285,6 +301,11 @@ impl fmt::Debug for LoopbackServerConfig {
             .field("accept_subsystem", &self.accept_subsystem)
             .field("accept_direct_tcpip", &self.accept_direct_tcpip)
             .field("accept_tcpip_forward", &self.accept_tcpip_forward)
+            .field("accept_direct_streamlocal", &self.accept_direct_streamlocal)
+            .field(
+                "accept_streamlocal_forward",
+                &self.accept_streamlocal_forward,
+            )
             .finish()
     }
 }
@@ -633,6 +654,31 @@ impl russh::server::Handler for LoopbackHandler {
         Ok(self.state.accept_tcpip_forward)
     }
 
+    async fn streamlocal_forward(
+        &mut self,
+        _socket_path: &str,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.state.accept_streamlocal_forward)
+    }
+
+    async fn cancel_streamlocal_forward(
+        &mut self,
+        _socket_path: &str,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.state.accept_streamlocal_forward)
+    }
+
+    async fn channel_open_direct_streamlocal(
+        &mut self,
+        _channel: Channel<Msg>,
+        _socket_path: &str,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        Ok(self.state.accept_direct_streamlocal)
+    }
+
     async fn data(
         &mut self,
         channel: ChannelId,
@@ -645,7 +691,11 @@ impl russh::server::Handler for LoopbackHandler {
             sftp.feed(channel, data, session)?;
             return Ok(());
         }
-        if self.state.accept_shell || !self.state.accept_subsystem.is_empty() {
+        if self.state.accept_shell
+            || !self.state.accept_subsystem.is_empty()
+            || self.state.accept_direct_tcpip
+            || self.state.accept_direct_streamlocal
+        {
             session.data(channel, data.to_vec())?;
         }
         Ok(())

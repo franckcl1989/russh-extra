@@ -1029,8 +1029,8 @@ Recommended `Cargo.toml` metadata:
 ```toml
 [package]
 name = "..."
-version = "0.1.0"
-edition = "2021"
+version = "0.1.1"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A high-level async SSH API built directly on top of russh"
 repository = "..."
@@ -1051,7 +1051,8 @@ Current status (May 2026): All milestones 0–8 are complete. The crate supports
 client, server, auth, known_hosts, command execution, shell, PTY, subsystems,
 X11 forwarding, agent forwarding tunnel, OpenSSH certificate authentication,
 auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
-(client + server handler). 200 tests pass. Ready for 0.1.0 crates.io publishing.
+(client + server handler). 212 tests pass. Released as 0.1.0 on crates.io.
+0.1.1 hardening release complete, pending publish.
 
 Suggested roadmap:
 

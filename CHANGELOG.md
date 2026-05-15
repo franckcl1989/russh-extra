@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
+## [0.1.1] - 2026-05-15
+
+### Added
+
+- `SftpErrorKind::NoSuchFile` and `SftpErrorKind::PermissionDenied` variants for
+  finer-grained SFTP error classification.
+- Server-side SFTP error-to-status-code mapping: handler errors with typed
+  `SftpErrorKind` values now produce the corresponding SFTP v3 status codes
+  (`SSH_FX_NO_SUCH_FILE`, `SSH_FX_PERMISSION_DENIED`, `SSH_FX_OP_UNSUPPORTED`,
+  `SSH_FX_BAD_MESSAGE`, `SSH_FX_FAILURE`).
+- Client-side SFTP status-code-to-error-kind mapping: specific SSH_FX codes
+  received from the server now produce typed `SftpErrorKind` variants.
+- `sftp_error_kind_for_code()` helper in `packet.rs` for shared client/server
+  SFTP status-to-kind mapping.
+- Unix-only integration tests for StreamLocal tunnel close (socket path cleanup)
+  and tunnel abort (no panic).
+- Known-hosts edge-case tests: wildcard-looking entries do not match unrelated
+  hosts, hashed entries are skipped with warnings, malformed lines mixed with
+  valid entries are collected as warnings.
+- Known-hosts `set_hash_hostnames()` regression test confirming plain-text
+  hostname output (hashed writing not yet implemented).
+
+### Changed
+
+- Documentation governance: `docs/dev/design/README.md`, `docs/dev/roadmap.md`,
+  and `docs/dev/development-plan.md` statuses reconciled with the post-0.1.0
+  implementation state. All top-level sections now show accurate status labels.
+- `AGENTS.md` updated: test count (205 → 212), edition reference (2021 → 2024),
+  and version roadmap status.
+- Roadmap Foundation, Client, Server, Known Hosts, and Testing sections marked
+  as Implemented.
+- `InMemorySftpHandler` test handler now uses `SftpErrorKind::NoSuchFile`
+  instead of a generic `Unsupported` error when a file is not found.
+
+### Fixed
+
+- Local StreamLocal forwarding now removes the Unix-domain socket file after
+  `Tunnel::close()` (previously the socket file was left behind on listener
+  shutdown).
+- SFTP server runtime maps typed handler errors to stable SFTP v3 status codes
+  instead of collapsing all failures to `SSH_FX_FAILURE`.
+
 ## [0.1.0] - 2026-05-09
 
 ### Changed

@@ -23,9 +23,9 @@ to Accepted and make sure the roadmap points to it.
 - [Error Taxonomy](./error-taxonomy.md) - Implemented
 - [Client Session API](./client-session-api.md) - Implemented
 - [Loopback Test Fixtures](./loopback-test-fixtures.md) - Implemented
-- [Server API](./server-api.md) - Implementing
-- [Known Hosts](./known-hosts.md) - Implemented (first runtime slice)
+- [Server API](./server-api.md) - Implemented (first runtime slice)
+- [Known Hosts](./known-hosts.md) - Implemented (first runtime slice, hashed/wildcard matching deferred)
 - [Public Key and Agent Authentication](./public-key-auth.md) - Implemented (first runtime slice)
-- [Channels and Shells](./channels-shells.md) - Implemented (first runtime slice)
-- [Native SFTP Layer](./native-sftp.md) - Accepted
-- [Forwarding and Tunnels](./forwarding-tunnels.md) - Implementing
+- [Channels and Shells](./channels-shells.md) - Implemented (first runtime slice, split read/write halves deferred)
+- [Native SFTP Layer](./native-sftp.md) - Implemented (SFTP v3, v4+ deferred)
+- [Forwarding and Tunnels](./forwarding-tunnels.md) - Implemented (first runtime slice, StreamLocal hardening and dynamic SOCKS deferred)

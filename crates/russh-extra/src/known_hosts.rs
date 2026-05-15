@@ -495,6 +495,15 @@ fn expand_tilde(path: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    fn make_file_owner_only(path: &std::path::Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[cfg(not(unix))]
+    fn make_file_owner_only(_path: &std::path::Path) {}
+
     #[test]
     fn parses_plain_hostname_entry() {
         let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIGk8abcdefghi";
@@ -989,6 +998,7 @@ mod tests {
         let path = dir.path().join("known_hosts");
         let encoded = base64_encode(b"source-path-key");
         std::fs::write(&path, format!("example.com ssh-ed25519 {encoded}\n")).unwrap();
+        make_file_owner_only(&path);
 
         let store = KnownHosts::load(&path).unwrap();
         let paths = store.source_paths();
@@ -1006,14 +1016,15 @@ mod tests {
             &path,
             format!(
                 "\
-                example.com ssh-ed25519 {encoded}\n\
-                |1|xxx|yyy ssh-ed25519 {encoded}\n\
-                @cert-authority ca.com ssh-ed25519 {encoded}\n\
-                bad line\n\
-                "
+                    example.com ssh-ed25519 {encoded}\n\
+                    |1|xxx|yyy ssh-ed25519 {encoded}\n\
+                    @cert-authority ca.com ssh-ed25519 {encoded}\n\
+                    bad line\n\
+                    "
             ),
         )
         .unwrap();
+        make_file_owner_only(&path);
 
         let store = KnownHosts::load(&path).unwrap();
 
@@ -1036,6 +1047,8 @@ mod tests {
 
         std::fs::write(&path1, format!("host-a.com ssh-ed25519 {encoded1}\n")).unwrap();
         std::fs::write(&path2, format!("host-b.com ssh-ed25519 {encoded2}\n")).unwrap();
+        make_file_owner_only(&path1);
+        make_file_owner_only(&path2);
 
         let store1 = KnownHosts::load(&path1).unwrap();
         let store2 = KnownHosts::load(&path2).unwrap();
@@ -1076,6 +1089,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("known_hosts");
         std::fs::write(&path, "").unwrap();
+        make_file_owner_only(&path);
 
         let store = KnownHosts::load(&path).unwrap();
         assert_eq!(store.entry_count(), 0);
@@ -1089,13 +1103,14 @@ mod tests {
         std::fs::write(
             &path,
             "\
-            # comment one\n\
-            \n\
-            # comment two\n\
-            \n\
-            ",
+                # comment one\n\
+                \n\
+                # comment two\n\
+                \n\
+                ",
         )
         .unwrap();
+        make_file_owner_only(&path);
 
         let store = KnownHosts::load(&path).unwrap();
         assert_eq!(store.entry_count(), 0);
@@ -1251,5 +1266,114 @@ mod tests {
 
         assert_eq!(entry.hostname(), "192.168.1.1");
         assert_eq!(entry.port(), 2222);
+    }
+
+    #[test]
+    fn wildcard_looking_entry_does_not_match_unrelated_hosts() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let store = KnownHosts::new();
+
+        let encoded = base64_encode(&public_key.to_bytes().unwrap());
+        let line = format!("*.example.com ssh-ed25519 {encoded}");
+        let entry = KnownHostsEntry::parse(&line).unwrap();
+
+        assert_eq!(entry.hostname(), "*.example.com");
+
+        store
+            .add_entry("*.example.com", 0, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("*.example.com", 22, &public_key),
+            KnownHostStatus::Match,
+            "exact wildcard string should match itself"
+        );
+        assert_eq!(
+            store.check("foo.example.com", 22, &public_key),
+            KnownHostStatus::NotFound,
+            "subdomain should not match wildcard-looking entry"
+        );
+        assert_eq!(
+            store.check("example.com", 22, &public_key),
+            KnownHostStatus::NotFound,
+            "bare domain should not match wildcard-looking entry"
+        );
+    }
+
+    #[test]
+    fn hashed_entry_skipped_with_warning_and_not_trusted() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let key_encoded = base64_encode(&public_key.to_bytes().unwrap());
+
+        let content = format!(
+            "example.com ssh-ed25519 {key_encoded}\n|1|abc123|def456 ssh-ed25519 {key_encoded}\n"
+        );
+
+        let (entries, warnings) = parse_known_hosts_content(&content);
+
+        assert_eq!(entries.len(), 1, "hashed entry should not be parsed");
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].reason.contains("hashed"));
+        assert_eq!(entries[0].hostname(), "example.com");
+    }
+
+    #[test]
+    fn malformed_lines_collected_as_warnings_not_trusted() {
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+        let key_encoded = base64_encode(&public_key.to_bytes().unwrap());
+
+        let content = format!(
+            "incomplete\n\
+             example.com ssh-ed25519 {key_encoded}\n\
+             another:bad!line!!\n\
+             "
+        );
+
+        let (entries, warnings) = parse_known_hosts_content(&content);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(warnings.len(), 2);
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.reason.contains("failed to parse"))
+        );
+    }
+
+    #[test]
+    fn set_hash_hostnames_is_documented_as_not_active() {
+        let mut store = KnownHosts::new();
+        assert!(!store.inner.read().unwrap().hash_hostnames);
+
+        store.set_hash_hostnames(true);
+        assert!(store.inner.read().unwrap().hash_hostnames);
+
+        let private_key =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key = private_key.public_key().clone();
+
+        store
+            .add_entry("example.com", 22, &public_key, "ssh-ed25519")
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("known_hosts");
+        store.save(&path).unwrap();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("example.com ssh-ed25519"),
+            "hostname should be plain text even when hash_hostnames is set (hashing not yet implemented)"
+        );
     }
 }

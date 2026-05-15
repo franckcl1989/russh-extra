@@ -20,8 +20,8 @@ API around `russh`. Pulling in a separate SFTP abstraction would make SFTP
 behavior depend on another project instead of making it a coherent part of
 `russh-extra`.
 
-SFTP is the single largest missing feature. Users need file upload, download,
-listing, and metadata operations without leaving the `russh-extra` API surface.
+Users need file reads, writes, listing, and metadata operations without leaving
+the `russh-extra` API surface.
 
 ## Accepted Decisions
 
@@ -35,7 +35,7 @@ let session = client.connect().await?;
 let sftp = session.sftp().await?;
 
 // Low-level file operations.
-let file = sftp.open("/etc/hostname", SftpOpenMode::Read).await?;
+let mut file = sftp.open("/etc/hostname", SftpOpenMode::READ).await?;
 let data = file.read(0, 4096).await?;
 file.close().await?;
 
@@ -44,10 +44,6 @@ let metadata = sftp.metadata("/var/log/app.log").await?;
 // Convenience helpers.
 sftp.write_all("/tmp/release.tar.gz", &release_bytes).await?;
 let content = sftp.read_to_vec("/etc/hostname").await?;
-
-// Streaming upload/download.
-sftp.upload("./local.tar.gz", "/remote/target.tar.gz").await?;
-sftp.download("/remote/data.bin", "./local.bin").await?;
 
 // Directory operations.
 let mut dir = sftp.opendir("/etc").await?;
@@ -107,9 +103,9 @@ The implementation maintains a `HashMap<u32, oneshot::Sender<SftpResponse>>` for
 pending requests behind a `tokio::sync::Mutex`. Public API methods insert a
 sender, send the request through the write mpsc, and await the receiver.
 
-Default max concurrent requests is 64. The `open()` method waits for the
-`FXP_HANDLE` response before returning the `SftpFile` handle. Reads and writes
-on that handle may proceed concurrently with other requests.
+The write queue is bounded. The `open()` method waits for the `FXP_HANDLE`
+response before returning the `SftpFile` handle. Reads and writes on that
+handle may proceed concurrently with other requests.
 
 ### Protocol version and extensions
 
@@ -122,9 +118,9 @@ Extension negotiation flow:
 1. Client sends `FXP_INIT { version: 3 }`.
 2. Server responds with `FXP_VERSION { version, extensions }`.
 3. If server version < 3, fail with `Error::Sftp(SftpErrorKind::UnsupportedVersion)`.
-4. If server version >= 3, operate in v3 mode. Server-supported extensions
-   (`extensions`) are recorded for future use but not used in the first runtime
-   slice.
+4. If server version >= 3, operate in v3 mode. Server-supported extensions are
+   decoded during negotiation but are not exposed as stable public API in the
+   current runtime.
 
 ### Error policy
 
@@ -140,9 +136,8 @@ SFTP errors flow through the existing `Error::Sftp(SftpErrorKind)` variant in
 | `UnsupportedVersion` | Server does not support SFTP v3 |
 | `Unsupported` | Unsupported SFTP operation or extension |
 
-The `Error::Sftp` variant carries a `SftpError` with a `kind()` accessor and an
-optional `status_code: u32` field for `RemoteStatus` kinds. Server status codes
-are mapped to readable names:
+The `Error::Sftp` variant carries a `SftpError` with a `kind()` accessor.
+Server status codes are mapped to readable names in diagnostic messages:
 
 | Code | Name | Error message example |
 |------|------|----------------------|
@@ -158,15 +153,14 @@ are mapped to readable names:
 
 ### Cancellation and shutdown
 
-- Dropping `SftpClient` closes the write mpsc channel, which signals the write
-  task to close the SSH channel. The read task terminates when the channel
-  closes.
-- Pending requests receive a cancellation error when the client is dropped.
-- `SftpClient::close()` sends `FXP_CLOSE` on the SSH channel and shuts down
-  both tasks gracefully.
+- Dropping all `SftpClient` clones closes the write mpsc channel. The read task
+  terminates when the SSH channel closes.
+- Pending requests receive a channel I/O error when the client runtime shuts
+  down.
 - Individual `SftpFile` handles send `FXP_CLOSE` for their handle on drop
   (best-effort; the close is spawned as a fire-and-forget task so Drop
   does not block).
+- `SftpDir` handles use the same best-effort close-on-drop behavior.
 
 ### Feature flags
 
@@ -180,10 +174,11 @@ are mapped to readable names:
 ### Escape hatches to russh
 
 - SFTP runs over the same connected session model as the rest of the client API.
-- `SftpClient::russh_channel()` (expert) exposes the underlying SSH channel for
-  raw SFTP packet access.
-- `SftpFile::russh_handle()` returns the SFTP file handle string for custom
-  operations.
+- `Session::russh_handle()` remains the explicit client escape hatch before
+  opening SFTP.
+- `SftpFile::handle()` and `SftpDir::handle()` return raw SFTP handle strings
+  for diagnostics and custom request experiments inside this crate. They do not
+  expose the underlying SSH channel.
 
 ## User-facing API
 
@@ -191,21 +186,21 @@ are mapped to readable names:
 
 ```rust
 let sftp: SftpClient = session.sftp().await?;
-
-// Versions and extensions that were negotiated.
-let version: u32 = sftp.protocol_version();
-let extensions: &HashMap<String, String> = sftp.extensions();
+let session_id = sftp.session_id();
 ```
 
 ### File operations
 
 ```rust
-let mut file = sftp.open("/home/deploy/config.toml", SftpOpenMode::Read).await?;
+let mut file = sftp.open("/home/deploy/config.toml", SftpOpenMode::READ).await?;
 let chunk = file.read(0, 4096).await?;
 // chunk is Vec<u8>; empty Vec signals EOF.
 file.close().await?;
 
-let file = sftp.open("/tmp/new.log", SftpOpenMode::Write | SftpOpenMode::Create | SftpOpenMode::Truncate).await?;
+let file = sftp.open(
+    "/tmp/new.log",
+    SftpOpenMode::WRITE | SftpOpenMode::CREATE | SftpOpenMode::TRUNCATE,
+).await?;
 file.write(0, b"hello\n").await?;
 file.close().await?;
 ```
@@ -216,12 +211,12 @@ file.close().await?;
 pub struct SftpOpenMode(u32);
 
 impl SftpOpenMode {
-    pub const Read: SftpOpenMode = SftpOpenMode(0x00000001);
-    pub const Write: SftpOpenMode = SftpOpenMode(0x00000002);
-    pub const Append: SftpOpenMode = SftpOpenMode(0x00000004);
-    pub const Create: SftpOpenMode = SftpOpenMode(0x00000008);
-    pub const Truncate: SftpOpenMode = SftpOpenMode(0x00000010);
-    pub const Exclusive: SftpOpenMode = SftpOpenMode(0x00000020);
+    pub const READ: SftpOpenMode = SftpOpenMode(0x00000001);
+    pub const WRITE: SftpOpenMode = SftpOpenMode(0x00000002);
+    pub const APPEND: SftpOpenMode = SftpOpenMode(0x00000004);
+    pub const CREATE: SftpOpenMode = SftpOpenMode(0x00000008);
+    pub const TRUNCATE: SftpOpenMode = SftpOpenMode(0x00000010);
+    pub const EXCLUSIVE: SftpOpenMode = SftpOpenMode(0x00000020);
 }
 ```
 
@@ -231,7 +226,8 @@ impl SftpOpenMode {
 let meta = sftp.metadata("/var/log/app.log").await?;
 // meta.size(), meta.permissions(), meta.accessed(), meta.modified()
 
-sftp.set_metadata("/var/log/app.log", SftpFileAttrs::new().permissions(0o644)).await?;
+let attrs = russh_extra::SftpMetadata::default().with_permissions(0o644);
+sftp.set_stat("/var/log/app.log", &attrs).await?;
 ```
 
 ### Directory listing
@@ -258,7 +254,7 @@ let resolved = sftp.canonicalize("/tmp/app-link").await?; // realpath
 ```rust
 sftp.rename("/tmp/old.txt", "/tmp/new.txt").await?;
 sftp.remove("/tmp/junk.txt").await?;
-sftp.create_dir("/tmp/new-dir", SftpFileAttrs::default()).await?;
+sftp.create_dir("/tmp/new-dir").await?;
 sftp.remove_dir("/tmp/old-dir").await?;
 ```
 
@@ -271,23 +267,18 @@ let content: Vec<u8> = sftp.read_to_vec("/etc/hostname").await?;
 // Write entire file.
 sftp.write_all("/tmp/data.bin", &bytes).await?;
 
-// Streaming upload (reads local file in chunks).
-sftp.upload("./local.tar.gz", "/remote/target.tar.gz").await?;
-
-// Streaming download (writes local file in chunks).
-sftp.download("/remote/data.bin", "./local.bin").await?;
 ```
 
 ## Behavior
 
 ### Happy path
 
-1. `Session::sftp()` constructs an `SftpClient` builder from the session handle.
-2. `SftpClient::open()` opens a session channel, requests `"sftp"` subsystem,
-   splits the channel, and spawns I/O tasks.
+1. `Session::sftp()` constructs an `SftpClient` from the session handle.
+2. It opens a session channel, requests the `"sftp"` subsystem, splits the
+   channel, and spawns I/O tasks.
 3. Client sends `FXP_INIT { version: 3 }` and waits for `FXP_VERSION`.
-4. Negotiation succeeds → `SftpClient` is ready. The `SftpClient` instance
-   shares the underlying I/O tasks via `Arc`.
+4. Negotiation succeeds and `SftpClient` is ready. Clones share the underlying
+   I/O tasks.
 5. Each public API call (open, read, write, stat, etc.) creates a numbered
    request, sends it through the write mpsc, and awaits the oneshot response.
 6. The write task serializes the request to an SFTP packet and writes it to
@@ -300,42 +291,44 @@ sftp.download("/remote/data.bin", "./local.bin").await?;
 
 | Scenario | Error |
 |----------|-------|
-| Server rejects `"sftp"` subsystem | `Error::Channel(ChannelErrorKind::Request)` |
+| Server rejects `"sftp"` subsystem | `Error::Sftp(SftpErrorKind::ChannelIo)` |
 | Server returns version < 3 | `Error::Sftp(SftpErrorKind::UnsupportedVersion)` |
 | Malformed packet (truncated length, bad type byte) | `Error::Sftp(SftpErrorKind::Protocol)` |
-| Server returns `SSH_FX_*` status | `Error::Sftp(SftpErrorKind::RemoteStatus)` with status code |
+| Server returns `SSH_FX_*` status | `Error::Sftp(SftpErrorKind::RemoteStatus)` with status code in the message |
 | Channel read error | `Error::Sftp(SftpErrorKind::ChannelIo)` |
 | Response for unknown request ID | `Error::Sftp(SftpErrorKind::UnexpectedResponse)` |
 | Write task mpsc closed (client dropped) | `Error::Sftp(SftpErrorKind::ChannelIo)` |
-| Pending request timeout | `Error::Timeout` |
+| Pending request is cancelled by shutdown | `Error::Sftp(SftpErrorKind::ChannelIo)` |
 
 ### Defaults
 
 - SFTP protocol v3.
-- Max concurrent requests: 64.
-- Read chunk size for streaming helpers: 32 KiB.
+- Write queue capacity: 256 requests.
+- Read chunk size for `read_to_vec()` and write chunk size for `write_all()`:
+  32 KiB.
 - No operation-level timeout by default (uses session timeouts).
 - `SftpFile` sends `FXP_CLOSE` on drop (fire-and-forget).
+- `SftpDir` sends `FXP_CLOSE` on drop (fire-and-forget).
 
 ### Cancellation and shutdown
 
-- `SftpClient::close()` sends a shutdown signal to the write task, which flushes
-  and closes the SSH channel. The read task exits when the channel closes.
-- Dropping `SftpClient` without `close()` triggers the same shutdown
-  through the write mpsc drop.
+- Dropping all `SftpClient` clones drops the write mpsc sender. The read task
+  exits when the SSH channel closes.
 - `SftpFile` handles: closing a file explicitly via `close()` awaits the
   `FXP_CLOSE` response. Dropping a file without `close()` spawns a
   fire-and-forget close.
-- Pending requests when the client shuts down receive `Error::Cancelled`.
+- `SftpDir` handles use the same explicit and drop-based close behavior.
+- Pending requests when the client shuts down receive
+  `Error::Sftp(SftpErrorKind::ChannelIo)`.
 
 ## Security
 
-- SFTP methods read and write local files. APIs that create local files
-  document their overwrite behavior.
+- SFTP methods read and write remote files over the SSH subsystem. Convenience
+  helpers operate on caller-provided byte slices and vectors; they do not read
+  or write local filesystem paths.
 - File paths appearing in SFTP request/response packets are not masked in
   tracing. Users sensitive to path logging should control log verbosity.
-- Local file I/O follows OS permission semantics. Remote file permissions
-  are set by the server.
+- Remote file permissions are set by the server.
 - SFTP packet serialization does not use `unsafe`.
 - `SftpClient` does not cache credentials or authentication state.
 - Channel I/O does not log packet payloads at `INFO` level or above.
@@ -349,7 +342,7 @@ sftp.download("/remote/data.bin", "./local.bin").await?;
 | Read raw bytes | `ChannelReadHalf::wait()` → `ChannelMsg::Data { data: Bytes }` |
 | Write raw bytes | `Handle::data(id, bytes)` (via `ChannelWriteHalf`) |
 | Close channel | `channel.close()` |
-| Session handle access | `Session::russh_handle()` → `RusshHandleGuard` |
+| Session handle access | `Session::russh_handle()` -> `RusshHandleGuard` before opening SFTP |
 
 The SFTP layer does **not** require new `russh` APIs. Channel read/write
 primitives exposed by `russh 0.60` are sufficient for SFTP packet I/O.
@@ -357,7 +350,7 @@ primitives exposed by `russh 0.60` are sufficient for SFTP packet I/O.
 ## Feature Flags and Compatibility
 
 - `sftp` exposes `SftpClient`, `SftpFile`, `SftpDir`, `SftpMetadata`,
-  `SftpDirEntry`, `SftpOpenMode`, `SftpFileAttrs`, and `SftpErrorKind`.
+  `SftpDirEntry`, and `SftpOpenMode`.
 - `client,sftp` exposes `Session::sftp()`.
 - `server,sftp` exposes `SftpServerHandler` trait and building integration.
 - `russh-extra --no-default-features --features sftp,aws-lc-rs` compiles.
@@ -373,22 +366,20 @@ primitives exposed by `russh 0.60` are sufficient for SFTP packet I/O.
 - **Concurrent file handles**: Multiple `SftpFile` handles may be open
   simultaneously. Each gets a unique SFTP handle string from the server.
 - **Server-closed handles**: If the server closes a handle unexpectedly, the
-  next operation receives an error. `SftpFile::close()` on an already-closed
-  handle is a no-op.
+  next operation receives a remote status error.
 - **Large file offsets**: Offsets are `u64`.
 - **Filename encoding**: Filenames are UTF-8 `String`s. Non-UTF-8 remote
   filenames produce `Error::Sftp(SftpErrorKind::Protocol)`.
-- **Extension negotiation**: Server extensions are stored but not used in the
-  first runtime slice. Unknown extensions do not cause errors.
+- **Extension negotiation**: Server extensions are decoded during negotiation
+  but not exposed as stable public API. Unknown extensions do not cause errors.
 - **Remote disconnect**: If the SSH connection drops, the read task terminates
   and pending awaiters receive `Error::Sftp(SftpErrorKind::ChannelIo)`.
 - **Packet reassembly**: The read task maintains a buffer. If a received chunk
   ends mid-packet, the partial packet is held until more data arrives. Packets
   larger than 256 KiB are rejected as malformed.
 - **Request ID wrapping**: `u32` request IDs wrap at `u32::MAX`. The pending
-  map is cleared of old entries; wrapping is safe as long as fewer than
-  `u32::MAX` requests are in flight simultaneously (guaranteed by the
-  concurrency limit of 64).
+  map removes entries as responses arrive; wrapping is safe as long as request
+  IDs do not collide with currently pending requests.
 
 ## Testing Plan
 
@@ -399,7 +390,7 @@ primitives exposed by `russh 0.60` are sufficient for SFTP packet I/O.
   packet rejection.
 - Request ID assignment and wrapping.
 - `SftpOpenMode` bitflag behavior.
-- `SftpFileAttrs` builder and serialization.
+- `SftpMetadata` builders and packet attribute serialization.
 - Status code to `SftpErrorKind::RemoteStatus` mapping.
 - Malformed packet rejection (truncated length, bad type byte, missing fields).
 
@@ -415,10 +406,8 @@ primitives exposed by `russh 0.60` are sufficient for SFTP packet I/O.
 - Rename, remove, rmdir.
 - Realpath / canonicalize.
 - `read_to_vec` and `write_all` convenience methods.
-- Streaming `upload` and `download` helpers.
 - Concurrent requests (interleaved reads on multiple files).
 - Handle close on `SftpFile` drop.
-- `SftpClient::close()` shutdown.
 - Server status error mapping (no such file, permission denied, etc.).
 - Malformed server response handling.
 - Remote disconnect during operation.
@@ -445,9 +434,7 @@ supported. Higher versions add extensions that can be negotiated later.
 ## Out of scope
 
 - SCP (separate protocol, not SFTP).
-- SFTP server-side handler (deferred until client SFTP is stable).
 - Recursive directory sync helpers (deferred until basic file ops are stable).
-- `fsetstat`, `fstat` operations with raw byte attributes (rarely used).
 - Vendor-specific SFTP extensions (OpenSSH statvfs, posix-rename, etc.).
 
 ## Acceptance Checklist
@@ -460,4 +447,4 @@ supported. Higher versions add extensions that can be negotiated later.
 - [x] Tests required for implementation are listed.
 - [x] Target SFTP protocol version and extension policy are specified (v3, extensions recorded not used).
 - [x] Channel read/write ownership model is specified (split channel, background tasks, mpsc+oneshot).
-- [x] Request pipeline limits are specified (64 concurrent, u32 request IDs, HashMap+oneshot).
+- [x] Request pipeline ownership is specified (bounded write queue, u32 request IDs, HashMap+oneshot).
