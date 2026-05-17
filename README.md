@@ -372,10 +372,10 @@ impl SftpServerHandler for MyFs {
 | `known-hosts` | yes | Known-hosts parser, in-memory store, and client integration |
 | `aws-lc-rs` | yes | `russh` crypto backend via aws-lc-rs |
 | `server` | no | Server listener, auth callbacks, exec routing, lifecycle hooks |
-| `shell` | no | Interactive shell, PTY, X11 forwarding, agent forwarding, subsystems |
+| `shell` | no | Interactive shell, PTY, subsystems; X11/agent forwarding needs `tunnel` |
 | `tunnel` | no | TCP and StreamLocal (Unix-domain) forwarding, direct channels |
 | `agent` | no | SSH agent authentication using `$SSH_AUTH_SOCK` on Unix |
-| `sftp` | no | Native SFTP v3 client and server (`SftpClient` + `SftpServerHandler` trait) |
+| `sftp` | no | Native SFTP v3 client; add `server` for `SftpServerHandler` trait |
 | `ring` | no | Alternative `russh` crypto backend via ring |
 | `flate2` | no | SSH compression support from `russh` |
 | `rsa` | no | RSA key algorithm support from `russh` |
@@ -558,6 +558,16 @@ and implementation status:
 - `docs/dev/roadmap.md` tracks accepted work.
 - `docs/dev/design/` contains guide-level design docs for non-trivial public API changes.
 - `.agents/skills/` contains local development skills.
+
+## Project Status
+
+`0.1.4` is the final release in the `0.1.x` series. The crate supports client,
+server, authentication, known-hosts, command execution, shell, PTY, subsystems,
+X11 forwarding, agent forwarding, OpenSSH certificate authentication, auth
+banner, local/remote TCP and StreamLocal forwarding, and SFTP (client and
+server handler). 284 tests pass on Linux, macOS, and Windows with 0 failures.
+
+See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ## License
 

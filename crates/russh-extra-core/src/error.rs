@@ -453,6 +453,18 @@ impl Error {
         Self::Forwarding(ForwardingError::new(kind, message))
     }
 
+    /// Creates a forwarding error with a lower-level source.
+    pub fn forwarding_with_source<E>(
+        kind: ForwardingErrorKind,
+        source: E,
+        message: impl Into<Cow<'static, str>>,
+    ) -> Self
+    where
+        E: StdError + Send + Sync + 'static,
+    {
+        Self::Forwarding(ForwardingError::with_source(kind, message, source))
+    }
+
     /// Creates a timeout error.
     pub fn timeout(operation: Operation, message: impl Into<Cow<'static, str>>) -> Self {
         Self::Timeout(TimeoutError::new(operation, message))

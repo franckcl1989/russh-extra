@@ -60,6 +60,7 @@ fn build_terminal_modes(pty: &Pty) -> Vec<(russh::Pty, u32)> {
 
 /// X11 forwarding parameters.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct X11Params {
     /// Whether the server should accept a single X11 connection.
     pub single_connection: bool,
@@ -340,6 +341,7 @@ impl Shell {
     /// (if configured), optionally requests X11 forwarding and agent
     /// forwarding, and starts the remote shell. Returns a streaming
     /// [`ShellHandle`] on success.
+    #[tracing::instrument(skip(self), fields(sid = %self.session_id, pty = ?self.pty, env_count = self.env.len(), x11 = self.x11_params.is_some(), agent = self.want_agent_forward))]
     pub async fn open(self) -> Result<ShellHandle> {
         let handle = self
             .handle
@@ -577,6 +579,7 @@ impl Subsystem {
     ///
     /// Opens a session channel and requests the named subsystem.
     /// Returns a streaming [`ShellHandle`] for I/O.
+    #[tracing::instrument(skip(self), fields(sid = %self.session_id, subsystem = %self.name))]
     pub async fn open(self) -> Result<ShellHandle> {
         let handle = self
             .handle
@@ -724,37 +727,7 @@ impl SubsystemBuilder {
 }
 
 fn map_channel_open_error(error: russh::Error) -> Error {
-    match error {
-        russh::Error::ChannelOpenFailure(_) => Error::channel_with_source(
-            ChannelErrorKind::Open,
-            "server refused to open a session channel",
-            error,
-        ),
-        russh::Error::RequestDenied => Error::channel_with_source(
-            ChannelErrorKind::Request,
-            "session channel open request was denied",
-            error,
-        ),
-        russh::Error::NotAuthenticated => Error::authentication_kind(
-            russh_extra_core::AuthenticationErrorKind::Unavailable,
-            "session is not authenticated",
-        ),
-        russh::Error::ConnectionTimeout | russh::Error::Elapsed(_) => {
-            Error::timeout(Operation::ChannelOpen, "session channel open timed out")
-        }
-        russh::Error::Disconnect | russh::Error::HUP => Error::disconnected(
-            Operation::ChannelOpen,
-            "server disconnected while opening a session channel",
-        ),
-        russh::Error::IO(source) => Error::transport_with_source(
-            russh_extra_core::TransportErrorKind::Io,
-            "transport I/O failed while opening a session channel",
-            source,
-        ),
-        error => {
-            Error::channel_with_source(ChannelErrorKind::Open, "session channel open failed", error)
-        }
-    }
+    super::client::map_channel_open_error(error)
 }
 
 fn map_shell_error(error: russh::Error) -> Error {

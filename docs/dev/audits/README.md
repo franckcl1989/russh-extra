@@ -49,3 +49,4 @@ Use the date the audit was completed, and a short scope slug (e.g.
 - [2026-05-15-release-0.1.1](./2026-05-15-release-0.1.1.md) — 0.1.1 hardening release audit (pass)
 - [2026-05-17-release-0.1.2](./2026-05-17-release-0.1.2.md) — 0.1.2 hardening release audit (pass)
 - [2026-05-17-release-0.1.3](./2026-05-17-release-0.1.3.md) — 0.1.3 hardening release audit (pass)
+- [2026-05-17-release-0.1.4](./2026-05-17-release-0.1.4.md) — 0.1.4 hardening release audit (pass, final 0.1.x)

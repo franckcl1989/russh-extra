@@ -43,7 +43,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
         _attrs: crate::SftpMetadata,
     ) -> ExtraResult<String> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "open not implemented",
         ))
     }
@@ -62,7 +62,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
         _len: u32,
     ) -> ExtraResult<Vec<u8>> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "read not implemented",
         ))
     }
@@ -76,7 +76,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
         _data: Vec<u8>,
     ) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "write not implemented",
         ))
     }
@@ -84,7 +84,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Remove a file.
     async fn remove(&self, _id: u32, _filename: String) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "remove not implemented",
         ))
     }
@@ -92,7 +92,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Rename a file or directory.
     async fn rename(&self, _id: u32, _oldpath: String, _newpath: String) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "rename not implemented",
         ))
     }
@@ -100,7 +100,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Create a directory.
     async fn mkdir(&self, _id: u32, _path: String, _attrs: crate::SftpMetadata) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "mkdir not implemented",
         ))
     }
@@ -108,7 +108,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Remove a directory.
     async fn rmdir(&self, _id: u32, _path: String) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "rmdir not implemented",
         ))
     }
@@ -116,7 +116,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Open a directory for listing.
     async fn opendir(&self, _id: u32, _path: String) -> ExtraResult<String> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "opendir not implemented",
         ))
     }
@@ -127,7 +127,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// directory (the runtime translates this to `SSH_FX_EOF`).
     async fn readdir(&self, _id: u32, _handle: String) -> ExtraResult<Vec<SftpDirEntry>> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "readdir not implemented",
         ))
     }
@@ -135,7 +135,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Stat a file by path.
     async fn stat(&self, _id: u32, _path: String) -> ExtraResult<crate::SftpMetadata> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "stat not implemented",
         ))
     }
@@ -143,7 +143,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Lstat a file by path (no symlink following).
     async fn lstat(&self, _id: u32, _path: String) -> ExtraResult<crate::SftpMetadata> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "lstat not implemented",
         ))
     }
@@ -151,7 +151,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Fstat an open file handle.
     async fn fstat(&self, _id: u32, _handle: String) -> ExtraResult<crate::SftpMetadata> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "fstat not implemented",
         ))
     }
@@ -164,7 +164,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
         _attrs: crate::SftpMetadata,
     ) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "setstat not implemented",
         ))
     }
@@ -177,7 +177,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
         _attrs: crate::SftpMetadata,
     ) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "fsetstat not implemented",
         ))
     }
@@ -185,7 +185,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Resolve a path to its canonical absolute form.
     async fn realpath(&self, _id: u32, _path: String) -> ExtraResult<Vec<SftpDirEntry>> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "realpath not implemented",
         ))
     }
@@ -193,7 +193,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Read the target of a symbolic link.
     async fn readlink(&self, _id: u32, _path: String) -> ExtraResult<Vec<SftpDirEntry>> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "readlink not implemented",
         ))
     }
@@ -201,7 +201,7 @@ pub trait SftpServerHandler: Send + Sync + 'static {
     /// Create a symbolic link.
     async fn symlink(&self, _id: u32, _linkpath: String, _targetpath: String) -> ExtraResult<()> {
         Err(Error::sftp(
-            SftpErrorKind::UnsupportedVersion,
+            SftpErrorKind::Unsupported,
             "symlink not implemented",
         ))
     }

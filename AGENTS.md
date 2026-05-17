@@ -346,10 +346,10 @@ full = [
   "tunnel",
   "known-hosts",
   "agent",
+  "sftp",
   "aws-lc-rs",
   "flate2",
   "rsa",
-  "sftp",
 ]
 ```
 
@@ -471,9 +471,9 @@ implementing.
 /// Illustrative reference — check `russh-extra-core` for the actual type.
 #[non_exhaustive]
 pub struct CommandOutput {
+    pub exit: CommandExit,
     pub stdout: bytes::Bytes,
     pub stderr: bytes::Bytes,
-    pub exit: CommandExit,
 }
 
 impl CommandOutput {
@@ -608,7 +608,7 @@ with no forbidden high-level SSHeep/SFTP dependencies.
 ### Client (`features = ["sftp"]`)
 
 - `SftpClient` is obtained from `Session::sftp()` after connect.
-- Supports: `open`, `readdir`, `read`, `write`, `remove`, `metadata`,
+- Supports: `open`, `opendir`, `readdir`, `read`, `write`, `remove`, `metadata`,
   `symlink_metadata`, `set_stat`, `fset_stat`, `create_dir`, `remove_dir`,
   `rename`, `close_file`, `closedir`, `symlink`, `readlink`, `canonicalize`,
   `read_to_vec`, `write_all`.
@@ -627,7 +627,8 @@ with no forbidden high-level SSHeep/SFTP dependencies.
 
 ### Builder helpers for server handler authors
 
-- `SftpMetadata::with_size(u64)` / `with_permissions(u32)` / `with_uid_gid(u32, u32)`.
+- `SftpMetadata::with_size(u64)` / `with_permissions(u32)` / `with_uid_gid(u32, u32)` /
+  `with_accessed(u64)` / `with_modified(u64)`.
 - `async_trait` is re-exported from `russh_extra` under `features = ["sftp", "server"]`.
 
 ### Known limitations (SFTP v3)
@@ -637,7 +638,7 @@ with no forbidden high-level SSHeep/SFTP dependencies.
 - `lock`/`unlock`/`statvfs`/`posix-rename` extensions are not implemented.
 - `readdir` returns batched entries via `readdir_batch()` (multiple
   `SSH_FXP_NAME` entries per response) drained by `SftpDir::read()`.
-- Read buffer size is fixed at 32 KiB per `read()` call.
+- `read_to_vec()` and `write_all()` use a fixed 32 KiB chunk size.
 - Server `SftpMetadata` fields are private; builder methods and the public
   constructor (`SftpMetadata::new()`, added in 0.1.2) cover construction needs.
 
@@ -652,7 +653,12 @@ with public kind enums for subcategory matching. The following is a design
 reference; always verify against `crates/russh-extra-core/src/error.rs` before
 implementing new error variants.
 
-Recommended direction:
+Recommended direction (this is an illustrative design sketch; the actual `Error`
+enum in `russh-extra-core/src/error.rs` uses a `CategoryError<K>` generic pattern
+with 14 variants: `InvalidConfig`, `Transport`, `HostKey`, `Authentication`,
+`Channel`, `CommandExit`, `Sftp`, `Forwarding`, `Timeout`, `Cancelled`,
+`Disconnected`, `Unsupported`, `Io`, `Ssh`. Each category variant wraps a
+`CategoryError<K>` with its own public `Kind` enum for subcategory matching):
 
 ```rust
 pub type Result<T> = std::result::Result<T, Error>;
@@ -1038,7 +1044,7 @@ Recommended `Cargo.toml` metadata:
 ```toml
 [package]
 name = "..."
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A high-level async SSH API built directly on top of russh"
@@ -1063,8 +1069,9 @@ auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
 (client + server handler). Released as 0.1.0 on crates.io.
 0.1.1 hardening release published 2026-05-15 (212 tests).
 0.1.2 hardening release published 2026-05-17 (229 tests, 0 failures).
-0.1.3 release ready: test hardening (263 tests), API completions, documentation drift fixes.
-263 tests pass, 0 failures.
+0.1.3 hardening release published 2026-05-17 (263 tests, 0 failures).
+0.1.4 hardening release published 2026-05-17 (284 tests, 0 failures).
+284 tests pass, 0 failures.
 
 Suggested roadmap:
 

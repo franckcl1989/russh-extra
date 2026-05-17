@@ -20,6 +20,7 @@ pub(crate) struct SftpClientRuntime {
     write_tx: mpsc::Sender<(u32, Vec<u8>)>,
     pending: Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SftpResponse>>>>>,
     next_id: Arc<std::sync::atomic::AtomicU32>,
+    abort_reason: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug)]
@@ -29,8 +30,6 @@ enum SftpResponse {
     Data(Vec<u8>),
     Name(Vec<(String, String, packet::SftpFileAttrs)>),
     Attrs(packet::SftpFileAttrs),
-    #[allow(dead_code)]
-    Version(u32, HashMap<String, String>),
 }
 
 impl SftpClientRuntime {
@@ -89,21 +88,25 @@ impl SftpClientRuntime {
         let pending: Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SftpResponse>>>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let next_id = Arc::new(std::sync::atomic::AtomicU32::new(10));
+        let abort_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
         let read_pending = pending.clone();
+        let read_abort_reason = abort_reason.clone();
         tokio::spawn(async move {
-            read_task(read_half, read_pending).await;
+            read_task(read_half, read_pending, read_abort_reason).await;
         });
 
         let write_pending = pending.clone();
+        let write_abort_reason = abort_reason.clone();
         tokio::spawn(async move {
-            write_task(write_half, write_rx, write_pending).await;
+            write_task(write_half, write_rx, write_pending, write_abort_reason).await;
         });
 
         Ok(Self {
             write_tx,
             pending,
             next_id,
+            abort_reason,
         })
     }
 
@@ -123,8 +126,16 @@ impl SftpClientRuntime {
             .await
             .map_err(|_| Error::sftp(SftpErrorKind::ChannelIo, "SFTP write task closed"))?;
 
-        rx.await
-            .map_err(|_| Error::sftp(SftpErrorKind::ChannelIo, "SFTP request cancelled"))?
+        match rx.await {
+            Ok(result) => result,
+            Err(_) => {
+                let reason = self.abort_reason.lock().await.take();
+                Err(Error::sftp(
+                    SftpErrorKind::ChannelIo,
+                    reason.unwrap_or_else(|| "SFTP request cancelled".into()),
+                ))
+            }
+        }
     }
 
     async fn expect_handle(&self, packet: Vec<u8>, id: u32) -> Result<String> {
@@ -339,6 +350,7 @@ impl SftpClientRuntime {
 async fn read_task(
     mut read_half: russh::ChannelReadHalf,
     pending: Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SftpResponse>>>>>,
+    abort_reason: Arc<Mutex<Option<String>>>,
 ) {
     let mut buf = Vec::new();
     loop {
@@ -351,7 +363,15 @@ async fn read_task(
                     }
                     let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
                     if len > MAX_PACKET_SIZE || len == 0 {
+                        let msg = format!("SFTP protocol error: invalid packet length {len}");
                         tracing::warn!(len, "invalid SFTP packet length, aborting read task");
+                        {
+                            *abort_reason.lock().await = Some(msg.clone());
+                        }
+                        let mut map = pending.lock().await;
+                        for (_, tx) in map.drain() {
+                            let _ = tx.send(Err(Error::sftp(SftpErrorKind::Protocol, msg.clone())));
+                        }
                         return;
                     }
                     if buf.len() < 4 + len {
@@ -379,7 +399,10 @@ async fn dispatch_response(
         return;
     }
     let result = match packet[0] {
-        packet::FXP_VERSION => decode_version_response(packet),
+        packet::FXP_VERSION => Err((
+            0,
+            Error::sftp(SftpErrorKind::Protocol, "unexpected FXP_VERSION after init"),
+        )),
         packet::FXP_STATUS => decode_status_response(packet),
         packet::FXP_HANDLE => decode_handle_response(packet),
         packet::FXP_DATA => decode_data_response(packet),
@@ -406,13 +429,6 @@ async fn dispatch_response(
             }
         }
     }
-}
-
-fn decode_version_response(
-    packet: &[u8],
-) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
-    let (version, extensions) = packet::decode_version(&packet[1..]).map_err(|e| (0, e))?;
-    Ok((0, SftpResponse::Version(version, extensions)))
 }
 
 fn decode_status_response(packet: &[u8]) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
@@ -449,22 +465,30 @@ async fn write_task(
     write_half: russh::ChannelWriteHalf<russh::client::Msg>,
     mut write_rx: mpsc::Receiver<(u32, Vec<u8>)>,
     pending: Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SftpResponse>>>>>,
+    abort_reason: Arc<Mutex<Option<String>>>,
 ) {
-    while let Some((_id, packet)) = write_rx.recv().await {
-        if let Err(e) = write_half.data(&packet[..]).await {
-            tracing::warn!(error = %e, "SFTP write task failed");
-            break;
+    let write_error: Option<String> = loop {
+        match write_rx.recv().await {
+            Some((_id, packet)) => {
+                if let Err(e) = write_half.data(&packet[..]).await {
+                    tracing::warn!(error = %e, "SFTP write task failed");
+                    break Some(format!("SFTP write failed: {e}"));
+                }
+            }
+            None => break None,
         }
-    }
+    };
 
     let _ = write_half.close().await;
 
+    let reason = write_error.unwrap_or_else(|| "SFTP channel closed".into());
+    {
+        *abort_reason.lock().await = Some(reason.clone());
+    }
+
     let mut map = pending.lock().await;
     for (_, tx) in map.drain() {
-        let _ = tx.send(Err(Error::sftp(
-            SftpErrorKind::ChannelIo,
-            "SFTP channel closed",
-        )));
+        let _ = tx.send(Err(Error::sftp(SftpErrorKind::ChannelIo, reason.clone())));
     }
 }
 
@@ -493,5 +517,43 @@ async fn read_sftp_response(read_half: &mut russh::ChannelReadHalf) -> Result<Op
             Some(ChannelMsg::Close) | None => return Ok(None),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn abort_reason_wired_in_sftp_client_runtime() {
+        let (_write_tx, _write_rx) = mpsc::channel::<(u32, Vec<u8>)>(8);
+        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let next_id = Arc::new(std::sync::atomic::AtomicU32::new(100));
+        let abort_reason = Arc::new(Mutex::new(Some(
+            "SFTP protocol error: invalid packet length 999999".into(),
+        )));
+
+        let runtime = SftpClientRuntime {
+            write_tx: _write_tx,
+            pending,
+            next_id,
+            abort_reason: abort_reason.clone(),
+        };
+
+        let reason = runtime.abort_reason.lock().await;
+        assert!(
+            reason
+                .as_deref()
+                .is_some_and(|r| r.contains("invalid packet length"))
+        );
+    }
+
+    #[tokio::test]
+    async fn sftp_response_enum_lacks_version_variant() {
+        let resp = SftpResponse::Status(0, "ok".into());
+        let debug = format!("{resp:?}");
+        // Verify Version variant is gone
+        assert!(!debug.contains("Version"));
+        assert!(debug.contains("Status"));
     }
 }

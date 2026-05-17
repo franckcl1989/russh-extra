@@ -11,8 +11,8 @@ use std::task::{Context, Poll};
 
 use russh::ChannelMsg;
 use russh_extra_core::{
-    ChannelErrorKind, Error, ForwardDirection, ForwardSpec, ForwardingErrorKind, Result, SessionId,
-    StreamLocalSpec, TcpEndpoint, Timeouts,
+    ChannelErrorKind, Error, ForwardDirection, ForwardSpec, ForwardingErrorKind, Operation, Result,
+    SessionId, StreamLocalSpec, TcpEndpoint, Timeouts,
 };
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
@@ -20,6 +20,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
+use tokio::time;
 
 use super::client::ClientHandler;
 
@@ -146,14 +147,23 @@ impl TunnelBuilder {
                     }
                 }
                 ForwardDirection::Remote => {
-                    start_remote_streamlocal_forward(
-                        handle,
-                        remote_streamlocal_forwards,
-                        bind,
-                        target,
-                        self.timeouts,
-                    )
-                    .await
+                    #[cfg(unix)]
+                    {
+                        start_remote_streamlocal_forward(
+                            handle,
+                            remote_streamlocal_forwards,
+                            bind,
+                            target,
+                            self.timeouts,
+                        )
+                        .await
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        Err(Error::unsupported(
+                            "remote streamlocal forwarding is not supported on this platform",
+                        ))
+                    }
                 }
                 _ => Err(Error::unsupported("unsupported forwarding direction")),
             },
@@ -232,7 +242,12 @@ impl Tunnel {
     /// Gracefully closes the tunnel.
     ///
     /// Sends a shutdown signal to the accept loop and waits for it to finish.
-    /// For remote forwarding, also sends a cancel request.
+    /// For remote forwarding, also sends a cancel request to the server.
+    ///
+    /// When a `Tunnel` is dropped without calling `close()`, a shutdown
+    /// signal is sent on a best-effort basis. During tokio runtime shutdown,
+    /// the spawned cancel task for remote forwards may not execute. Always
+    /// call `close()` explicitly before dropping to guarantee cleanup.
     pub async fn close(mut self) -> Result<()> {
         if let Some(tx) = self.close_tx.take() {
             let _ = tx.send(());
@@ -380,7 +395,7 @@ async fn start_remote_forward(
     remote_forwards: RemoteForwardMap,
     bind: &TcpEndpoint,
     target: &TcpEndpoint,
-    _timeouts: Timeouts,
+    timeouts: Timeouts,
 ) -> Result<Tunnel> {
     let remote_port = bind.port() as u32;
     let remote_host = bind.host().to_string();
@@ -403,42 +418,47 @@ async fn start_remote_forward(
 
     let allocated_port = {
         let guard = handle.lock().await;
-        guard
-            .tcpip_forward(remote_host.as_str(), remote_port)
-            .await
-            .map_err(|e| {
-                let fwds = remote_forwards.clone();
-                let port = bind.port();
-                tokio::spawn(async move {
-                    fwds.lock().await.remove(&port);
-                });
+        time::timeout(
+            timeouts.channel_open,
+            guard.tcpip_forward(remote_host.as_str(), remote_port),
+        )
+        .await
+        .map_err(|_| {
+            Error::timeout(
+                Operation::Forwarding,
+                "timed out waiting for remote tcpip-forward response",
+            )
+        })?
+        .map_err(|e| {
+            let fwds = remote_forwards.clone();
+            let port = bind.port();
+            tokio::spawn(async move {
+                fwds.lock().await.remove(&port);
+            });
 
-                match &e {
-                    russh::Error::RequestDenied => Error::forwarding(
-                        ForwardingErrorKind::GlobalRequest,
-                        format!(
-                            "remote tcpip-forward request denied for {}:{}",
-                            remote_host, remote_port
-                        ),
+            match &e {
+                russh::Error::RequestDenied => Error::forwarding(
+                    ForwardingErrorKind::GlobalRequest,
+                    format!(
+                        "remote tcpip-forward request denied for {}:{}",
+                        remote_host, remote_port
                     ),
-                    _ => Error::forwarding(
-                        ForwardingErrorKind::GlobalRequest,
-                        format!(
-                            "failed to request remote tcpip-forward for {}:{}",
-                            remote_host, remote_port
-                        ),
+                ),
+                _ => Error::forwarding(
+                    ForwardingErrorKind::GlobalRequest,
+                    format!(
+                        "failed to request remote tcpip-forward for {}:{}",
+                        remote_host, remote_port
                     ),
-                }
-            })?
+                ),
+            }
+        })?
     };
 
-    let bound = format!("{}:{}", remote_host, allocated_port)
+    let allocated_port_u16 = u16::try_from(allocated_port).unwrap_or(0);
+    let bound = format!("{}:{}", remote_host, allocated_port_u16)
         .parse()
-        .unwrap_or_else(|_| {
-            format!("0.0.0.0:{allocated_port}")
-                .parse()
-                .expect("0.0.0.0:{port} must parse as SocketAddr for a valid u16 port")
-        });
+        .unwrap_or_else(|_| SocketAddr::from(([0u8, 0, 0, 0], allocated_port_u16)));
 
     let (close_tx, close_rx) = oneshot::channel::<()>();
     let cancel_host = remote_host.clone();
@@ -457,7 +477,8 @@ async fn start_remote_forward(
 
         {
             let mut fwds = cancel_fwds.lock().await;
-            fwds.remove(&(cancel_port as u16));
+            let port = u16::try_from(cancel_port).unwrap_or(0);
+            fwds.remove(&port);
         }
 
         let guard = cancel_handle.lock().await;
@@ -626,7 +647,7 @@ async fn start_remote_streamlocal_forward(
     remote_forwards: RemoteStreamLocalForwardMap,
     bind: &StreamLocalSpec,
     target: &StreamLocalSpec,
-    _timeouts: Timeouts,
+    timeouts: Timeouts,
 ) -> Result<Tunnel> {
     let socket_path = bind.path().to_string_lossy().to_string();
 
@@ -646,27 +667,35 @@ async fn start_remote_streamlocal_forward(
 
     {
         let guard = handle.lock().await;
-        guard
-            .streamlocal_forward(socket_path.as_str())
-            .await
-            .map_err(|e| {
-                let fwds = remote_forwards.clone();
-                let path = socket_path.clone();
-                tokio::spawn(async move {
-                    fwds.lock().await.remove(&path);
-                });
+        time::timeout(
+            timeouts.channel_open,
+            guard.streamlocal_forward(socket_path.as_str()),
+        )
+        .await
+        .map_err(|_| {
+            Error::timeout(
+                Operation::Forwarding,
+                "timed out waiting for remote streamlocal-forward response",
+            )
+        })?
+        .map_err(|e| {
+            let fwds = remote_forwards.clone();
+            let path = socket_path.clone();
+            tokio::spawn(async move {
+                fwds.lock().await.remove(&path);
+            });
 
-                match &e {
-                    russh::Error::RequestDenied => Error::forwarding(
-                        ForwardingErrorKind::GlobalRequest,
-                        format!("remote streamlocal-forward request denied for {socket_path}"),
-                    ),
-                    _ => Error::forwarding(
-                        ForwardingErrorKind::GlobalRequest,
-                        format!("failed to request remote streamlocal-forward for {socket_path}"),
-                    ),
-                }
-            })?;
+            match &e {
+                russh::Error::RequestDenied => Error::forwarding(
+                    ForwardingErrorKind::GlobalRequest,
+                    format!("remote streamlocal-forward request denied for {socket_path}"),
+                ),
+                _ => Error::forwarding(
+                    ForwardingErrorKind::GlobalRequest,
+                    format!("failed to request remote streamlocal-forward for {socket_path}"),
+                ),
+            }
+        })?;
     }
 
     let bound_path = socket_path.clone();
@@ -770,24 +799,37 @@ impl DirectTcpBuilder {
             .ok_or_else(|| Error::unsupported("direct TCP requires a connected session"))?;
 
         let guard = handle.lock().await;
-        let channel = guard
-            .channel_open_direct_tcpip(
+        let channel = time::timeout(
+            self.timeouts.channel_open,
+            guard.channel_open_direct_tcpip(
                 self.target.host(),
                 self.target.port() as u32,
                 "127.0.0.1",
                 0u32,
+            ),
+        )
+        .await
+        .map_err(|_| {
+            Error::timeout(
+                Operation::ChannelOpen,
+                format!(
+                    "direct-tcpip channel open timed out for {}:{}",
+                    self.target.host(),
+                    self.target.port()
+                ),
             )
-            .await
-            .map_err(|_e| {
-                Error::forwarding(
-                    ForwardingErrorKind::ChannelOpen,
-                    format!(
-                        "failed to open direct-tcpip channel to {}:{}",
-                        self.target.host(),
-                        self.target.port()
-                    ),
-                )
-            })?;
+        })?
+        .map_err(|e| {
+            Error::forwarding_with_source(
+                ForwardingErrorKind::ChannelOpen,
+                e,
+                format!(
+                    "failed to open direct-tcpip channel to {}:{}",
+                    self.target.host(),
+                    self.target.port()
+                ),
+            )
+        })?;
 
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
@@ -818,7 +860,6 @@ pub struct DirectStreamLocalBuilder {
     session_id: SessionId,
     handle: Option<Arc<Mutex<russh::client::Handle<ClientHandler>>>>,
     socket_path: PathBuf,
-    #[allow(dead_code)]
     timeouts: Timeouts,
 }
 
@@ -827,6 +868,7 @@ impl fmt::Debug for DirectStreamLocalBuilder {
         f.debug_struct("DirectStreamLocalBuilder")
             .field("session_id", &self.session_id)
             .field("socket_path", &self.socket_path)
+            .field("timeouts", &self.timeouts)
             .finish()
     }
 }
@@ -866,18 +908,30 @@ impl DirectStreamLocalBuilder {
             .ok_or_else(|| Error::unsupported("direct streamlocal requires a connected session"))?;
 
         let guard = handle.lock().await;
-        let channel = guard
-            .channel_open_direct_streamlocal(self.socket_path.to_string_lossy().as_ref())
-            .await
-            .map_err(|_e| {
-                Error::forwarding(
-                    ForwardingErrorKind::ChannelOpen,
-                    format!(
-                        "failed to open direct-streamlocal channel to {}",
-                        self.socket_path.display()
-                    ),
-                )
-            })?;
+        let channel = time::timeout(
+            self.timeouts.channel_open,
+            guard.channel_open_direct_streamlocal(self.socket_path.to_string_lossy().as_ref()),
+        )
+        .await
+        .map_err(|_| {
+            Error::timeout(
+                Operation::ChannelOpen,
+                format!(
+                    "direct-streamlocal channel open timed out for {}",
+                    self.socket_path.display()
+                ),
+            )
+        })?
+        .map_err(|e| {
+            Error::forwarding_with_source(
+                ForwardingErrorKind::ChannelOpen,
+                e,
+                format!(
+                    "failed to open direct-streamlocal channel to {}",
+                    self.socket_path.display()
+                ),
+            )
+        })?;
 
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();

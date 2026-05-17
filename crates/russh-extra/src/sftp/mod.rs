@@ -75,6 +75,7 @@ impl SftpClient {
     }
 
     /// Opens a remote file.
+    #[tracing::instrument(skip(self, filename), fields(filename = filename))]
     pub async fn open(&self, filename: &str, mode: SftpOpenMode) -> Result<SftpFile> {
         self.runtime()?.open(filename, mode.bits()).await
     }

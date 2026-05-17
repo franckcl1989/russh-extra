@@ -160,12 +160,18 @@ impl CertificateCredential {
 fn expand_tilde_path(path: &std::path::Path) -> PathBuf {
     if let Some(path_str) = path.to_str()
         && (path_str == "~" || path_str.starts_with("~/"))
-        && let Ok(home) = std::env::var("HOME")
     {
-        if path_str == "~" {
-            return PathBuf::from(home);
+        #[cfg(target_os = "windows")]
+        let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE"));
+        #[cfg(not(target_os = "windows"))]
+        let home = std::env::var("HOME");
+
+        if let Ok(home) = home {
+            if path_str == "~" {
+                return PathBuf::from(home);
+            }
+            return PathBuf::from(home).join(&path_str[2..]);
         }
-        return PathBuf::from(home).join(&path_str[2..]);
     }
 
     path.to_path_buf()
@@ -594,7 +600,8 @@ impl client::Handler for ClientHandler {
     ) -> std::result::Result<(), Self::Error> {
         let target = {
             let fwds = self.remote_forwards.lock().await;
-            fwds.get(&(connected_port as u16)).cloned()
+            let port = u16::try_from(connected_port).unwrap_or(0);
+            fwds.get(&port).cloned()
         };
         match target {
             Some(target) => {
@@ -1667,7 +1674,7 @@ fn map_auth_error(error: russh::Error) -> Error {
     }
 }
 
-fn map_channel_open_error(error: russh::Error) -> Error {
+pub(crate) fn map_channel_open_error(error: russh::Error) -> Error {
     match error {
         russh::Error::ChannelOpenFailure(_) => Error::channel_with_source(
             ChannelErrorKind::Open,
@@ -1736,6 +1743,7 @@ fn map_command_error(error: russh::Error) -> Error {
 
 /// Remote command request.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct RemoteCommand {
     program: String,
     stdin: Bytes,
@@ -1806,7 +1814,7 @@ impl From<String> for RemoteCommand {
 
 /// Captured command output.
 #[non_exhaustive]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct CommandOutput {
     /// Process exit information.
     pub exit: CommandExit,
@@ -1814,6 +1822,16 @@ pub struct CommandOutput {
     pub stdout: Bytes,
     /// Captured stderr.
     pub stderr: Bytes,
+}
+
+impl fmt::Debug for CommandOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommandOutput")
+            .field("exit", &self.exit)
+            .field("stdout", &format_args!("<{} bytes>", self.stdout.len()))
+            .field("stderr", &format_args!("<{} bytes>", self.stderr.len()))
+            .finish()
+    }
 }
 
 impl CommandOutput {

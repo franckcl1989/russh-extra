@@ -76,6 +76,29 @@ Forwarding designs must specify:
 - Backpressure behavior during bidirectional stream copy.
 - Platform differences for streamlocal forwarding.
 
+## Resource Cleanup During Runtime Shutdown
+
+`SftpFile`, `SftpDir`, and `Tunnel` implement `Drop` with best-effort remote
+cleanup (spawning a `tokio::spawn` close or cancel task on drop). During
+tokio runtime shutdown, these spawned tasks may not execute, and the remote
+resource (file handle, directory handle, port forward) may leak on the server.
+Always call the explicit `close()` or `abort()` method before dropping these
+types to guarantee cleanup.
+
+## Server Publickey Offer Phase
+
+The SSH publickey authentication protocol has two phases: the *offer* phase
+(`auth_publickey_offered`) where the client probes whether a key is acceptable,
+and the *proof* phase (`auth_publickey`) where the client proves key ownership.
+
+`russh-extra` unconditionally returns `Auth::Accept` during the offer phase
+for all usernames, regardless of whether the user exists or whether their key
+is authorized. This leaks whether a username exists on the server (username
+enumeration). The actual access decision is made during the proof phase by
+the configured public key authentication handler. To fully block username
+enumeration, deploy a rate-limiting or firewall layer in front of the SSH
+server; `russh` does not expose per-user offer-phase gating.
+
 ## Security Testing
 
 Tests should cover:

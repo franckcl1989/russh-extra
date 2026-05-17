@@ -15,6 +15,7 @@ architecture, and roadmap docs.
 - [0.1.1 Development Plan](./0.1.1-development-plan.md)
 - [0.1.2 Development Plan](./0.1.2-development-plan.md)
 - [0.1.3 Development Plan](./0.1.3-development-plan.md)
+- [0.1.4 Development Plan](./0.1.4-development-plan.md) (final 0.1.x)
 - [Security Policy](./security.md)
 - [Release and Compatibility Policy](./release.md)
 

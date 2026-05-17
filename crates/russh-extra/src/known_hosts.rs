@@ -163,6 +163,7 @@ pub enum KnownHostStatus {
 
 /// Warning collected during known-hosts file parsing.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct KnownHostsParseWarning {
     /// Line number (1-based).
     pub line: usize,
@@ -173,6 +174,13 @@ pub struct KnownHostsParseWarning {
 }
 
 /// In-memory known-hosts store.
+///
+/// # Panics
+///
+/// All public methods on `KnownHosts` may panic if the internal [`RwLock`] is
+/// poisoned by a prior panic while holding the lock. Lock poisoning only
+/// occurs after a panic in another method; as long as no other method panics,
+/// these methods will not panic.
 #[derive(Clone, Debug)]
 pub struct KnownHosts {
     inner: Arc<RwLock<KnownHostsInner>>,
@@ -200,6 +208,7 @@ impl KnownHosts {
     }
 
     /// Loads known-hosts entries from a file.
+    #[tracing::instrument(skip(path), fields(path = %path.as_ref().display()))]
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         let path = expand_tilde(path.as_ref());
         validate_known_hosts_permissions(&path)?;
@@ -241,6 +250,7 @@ impl KnownHosts {
     }
 
     /// Checks a host key against the store.
+    #[tracing::instrument(skip(self, public_key), fields(host = host, port = port))]
     pub fn check(&self, host: &str, port: u16, public_key: &PublicKey) -> KnownHostStatus {
         let inner = self.inner.read().expect("known-hosts lock poisoned");
         let key_bytes = public_key_to_bytes(public_key);
@@ -280,6 +290,7 @@ impl KnownHosts {
     }
 
     /// Adds or updates an entry for a host.
+    #[tracing::instrument(skip(self, public_key), fields(host = host, port = port))]
     pub fn add_entry(
         &self,
         host: &str,
@@ -332,6 +343,7 @@ impl KnownHosts {
     }
 
     /// Saves the store to a file in OpenSSH known-hosts format.
+    #[tracing::instrument(skip(self, path), fields(path = %path.as_ref().display()))]
     pub fn save(&self, path: impl AsRef<Path>) -> Result<()> {
         let path = expand_tilde(path.as_ref());
         let inner = self.inner.read().expect("known-hosts lock poisoned");
@@ -350,7 +362,7 @@ impl KnownHosts {
                 .as_deref()
                 .map(|c| format!(" {c}"))
                 .unwrap_or_default();
-            let key_b64 = base64_encode(&entry.key_blob);
+            let key_b64 = base64_encode(&entry.key_blob)?;
 
             output.push_str(&format!(
                 "{marker}{host_part} {} {key_b64}{comment}\n",
@@ -451,17 +463,20 @@ fn public_key_to_bytes(public_key: &PublicKey) -> Option<Vec<u8>> {
     public_key.to_bytes().ok()
 }
 
-fn base64_encode(data: &[u8]) -> String {
+fn base64_encode(data: &[u8]) -> Result<String> {
     use std::io::Write;
 
     let mut buf = Vec::new();
     {
         let mut encoder =
             base64::write::EncoderWriter::new(&mut buf, &base64::engine::general_purpose::STANDARD);
-        encoder.write_all(data).ok();
+        encoder
+            .write_all(data)
+            .map_err(|e| Error::invalid_config(format!("base64 encode failed: {e}")))?;
     }
 
-    String::from_utf8(buf).unwrap_or_default()
+    String::from_utf8(buf)
+        .map_err(|e| Error::invalid_config(format!("base64 output is not valid UTF-8: {e}")))
 }
 
 fn validate_known_hosts_permissions(path: &Path) -> Result<()> {
@@ -523,7 +538,7 @@ mod tests {
     #[test]
     fn parses_plain_hostname_entry() {
         let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIGk8abcdefghi";
-        let encoded = base64_encode(b"real-key-data");
+        let encoded = base64_encode(b"real-key-data").unwrap();
         let line = format!("example.com ssh-ed25519 {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -537,7 +552,7 @@ mod tests {
 
     #[test]
     fn parses_bracketed_port_entry() {
-        let encoded = base64_encode(b"real-key-data");
+        let encoded = base64_encode(b"real-key-data").unwrap();
         let line = format!("[example.com]:2222 ssh-rsa {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -548,7 +563,7 @@ mod tests {
 
     #[test]
     fn parses_revoked_entry() {
-        let encoded = base64_encode(b"revoked-key-data");
+        let encoded = base64_encode(b"revoked-key-data").unwrap();
         let line = format!("@revoked example.com ssh-ed25519 {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -557,7 +572,7 @@ mod tests {
 
     #[test]
     fn parses_entry_with_comment() {
-        let encoded = base64_encode(b"key-with-comment");
+        let encoded = base64_encode(b"key-with-comment").unwrap();
         let line = format!("example.com ssh-ed25519 {encoded} extra info here");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -583,7 +598,7 @@ mod tests {
 
     #[test]
     fn skips_cert_authority_entries() {
-        let encoded = base64_encode(b"ca-key");
+        let encoded = base64_encode(b"ca-key").unwrap();
         let content = format!("@cert-authority example.com ssh-ed25519 {encoded}\n");
         let (entries, warnings) = parse_known_hosts_content(&content);
 
@@ -594,7 +609,7 @@ mod tests {
 
     #[test]
     fn parses_multiple_valid_entries_and_collects_warnings() {
-        let encoded = base64_encode(b"multi-key");
+        let encoded = base64_encode(b"multi-key").unwrap();
         let content = format!(
             "\
             example.com ssh-ed25519 {encoded}\n\
@@ -675,7 +690,7 @@ mod tests {
 
     #[test]
     fn parses_comma_separated_hostname_line() {
-        let encoded = base64_encode(b"comma-sep-key");
+        let encoded = base64_encode(b"comma-sep-key").unwrap();
         let line = format!("host-a,host-b,host-c ssh-ed25519 {encoded}");
         let entries = KnownHostsEntry::parse(&line);
         assert_eq!(entries.len(), 3, "should produce one entry per host");
@@ -689,7 +704,7 @@ mod tests {
 
     #[test]
     fn parses_ip_address_entry() {
-        let encoded = base64_encode(b"ip-addr-key");
+        let encoded = base64_encode(b"ip-addr-key").unwrap();
         let line = format!("192.168.1.1 ssh-ed25519 {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -699,7 +714,7 @@ mod tests {
 
     #[test]
     fn parses_ecdsa_algorithm_entry() {
-        let encoded = base64_encode(b"ecdsa-key-data");
+        let encoded = base64_encode(b"ecdsa-key-data").unwrap();
         let line = format!("example.com ecdsa-sha2-nistp256 {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -720,7 +735,7 @@ mod tests {
 
     #[test]
     fn rejects_line_with_only_tag_and_key() {
-        let encoded = base64_encode(b"only-two-parts");
+        let encoded = base64_encode(b"only-two-parts").unwrap();
         let line = format!("ssh-ed25519 {encoded}");
         assert!(KnownHostsEntry::parse(&line).is_empty());
     }
@@ -1017,7 +1032,7 @@ mod tests {
     fn source_paths_recorded_on_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("known_hosts");
-        let encoded = base64_encode(b"source-path-key");
+        let encoded = base64_encode(b"source-path-key").unwrap();
         std::fs::write(&path, format!("example.com ssh-ed25519 {encoded}\n")).unwrap();
         make_file_owner_only(&path);
 
@@ -1032,7 +1047,7 @@ mod tests {
     fn warnings_from_file_load() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("known_hosts");
-        let encoded = base64_encode(b"warning-key");
+        let encoded = base64_encode(b"warning-key").unwrap();
         std::fs::write(
             &path,
             format!(
@@ -1063,8 +1078,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path1 = dir.path().join("kh1");
         let path2 = dir.path().join("kh2");
-        let encoded1 = base64_encode(b"merge-key-1");
-        let encoded2 = base64_encode(b"merge-key-2");
+        let encoded1 = base64_encode(b"merge-key-1").unwrap();
+        let encoded2 = base64_encode(b"merge-key-2").unwrap();
 
         std::fs::write(&path1, format!("host-a.com ssh-ed25519 {encoded1}\n")).unwrap();
         std::fs::write(&path2, format!("host-b.com ssh-ed25519 {encoded2}\n")).unwrap();
@@ -1145,7 +1160,7 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("known_hosts");
-        let encoded = base64_encode(b"perm-key");
+        let encoded = base64_encode(b"perm-key").unwrap();
         std::fs::write(&path, format!("example.com ssh-ed25519 {encoded}\n")).unwrap();
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664)).unwrap();
 
@@ -1258,7 +1273,7 @@ mod tests {
 
     #[test]
     fn known_hosts_entry_round_trip_through_parse() {
-        let encoded = base64_encode(b"round-trip-key-data");
+        let encoded = base64_encode(b"round-trip-key-data").unwrap();
         let line = format!("@revoked [example.com]:2222 ssh-ed25519 {encoded} my comment");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -1281,7 +1296,7 @@ mod tests {
 
     #[test]
     fn ip_address_bracketed_port() {
-        let encoded = base64_encode(b"ip-bracket-key");
+        let encoded = base64_encode(b"ip-bracket-key").unwrap();
         let line = format!("[192.168.1.1]:2222 ssh-ed25519 {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -1297,7 +1312,7 @@ mod tests {
         let public_key = private_key.public_key().clone();
         let store = KnownHosts::new();
 
-        let encoded = base64_encode(&public_key.to_bytes().unwrap());
+        let encoded = base64_encode(&public_key.to_bytes().unwrap()).unwrap();
         let line = format!("*.example.com ssh-ed25519 {encoded}");
         let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
@@ -1330,7 +1345,7 @@ mod tests {
             russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
                 .unwrap();
         let public_key = private_key.public_key().clone();
-        let key_encoded = base64_encode(&public_key.to_bytes().unwrap());
+        let key_encoded = base64_encode(&public_key.to_bytes().unwrap()).unwrap();
 
         let content = format!(
             "example.com ssh-ed25519 {key_encoded}\n|1|abc123|def456 ssh-ed25519 {key_encoded}\n"
@@ -1350,7 +1365,7 @@ mod tests {
             russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
                 .unwrap();
         let public_key = private_key.public_key().clone();
-        let key_encoded = base64_encode(&public_key.to_bytes().unwrap());
+        let key_encoded = base64_encode(&public_key.to_bytes().unwrap()).unwrap();
 
         let content = format!(
             "incomplete\n\

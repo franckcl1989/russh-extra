@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
+## [0.1.4] - 2026-05-17
+
+### Fixed
+
+- **CI**: Windows test failure (`identity_key_file_expands_tilde`) fixed by
+  adding `USERPROFILE` fallback to tilde expansion in `auth.rs`, `forward.rs`,
+  and `client.rs`, matching the pattern already used in `known_hosts.rs`.
+  All three platforms now pass CI.
+- **Timeout bug**: `DirectTcpBuilder::open()` and `DirectStreamLocalBuilder::open()`
+  now apply the configured `channel_open` timeout via `tokio::time::timeout()`.
+  Previously, timeouts were stored but silently ignored.
+- **Known hosts data integrity**: `base64_encode()` no longer silently swallows
+  write errors or non-UTF-8 output. Both error cases now return typed errors
+  through the `Result<String>` return type.
+- **SFTP read task abort**: When the SFTP read task detects an invalid packet
+  length, it now drains all pending requests with a specific error message
+  (`"SFTP protocol error: invalid packet length {len}"`) instead of silently
+  dropping the oneshot senders, which caused subsequent `send_and_await` calls
+  to hang indefinitely.
+- **SFTP write task error propagation**: When the SFTP write task fails,
+  the specific write error is now included in the error message sent to all
+  pending requests, rather than the generic `"SFTP channel closed"`.
+- **SFTP error message accuracy**: When a oneshot sender is dropped due to
+  protocol abort, `send_and_await` now returns the specific abort reason
+  stored in `SftpClientRuntime` instead of the misleading
+  `"SFTP request cancelled"`.
+- **Tunnel expect message**: Fixed `{port}` not being interpolated in the
+  `expect` message of the remote forwarding bind address parser.
+- **Remote forward timeout**: `start_remote_forward()` and
+  `start_remote_streamlocal_forward()` now apply the configured
+  `channel_open` timeout to the `tcpip_forward()` and `streamlocal_forward()`
+  global request calls. Previously the timeout was passed but never used.
+- **Remote bound address panic**: The `.expect()` on `"0.0.0.0:{port}".parse()`
+  in remote TCP forwarding was replaced with a safe `SocketAddr::from()`
+  construction using `u16::try_from().unwrap_or(0)`, preventing a theoretical
+  panic when a server returns a port value larger than `u16::MAX`.
+
+### Removed
+
+- `SftpResponse::Version` dead variant removed. The `FXP_VERSION` packet type
+  is now handled as a protocol error after init instead of silently decoding
+  into a variant that was never destructured.
+
+### Added
+
+- `Error::forwarding_with_source()` constructor for forwarding errors that
+  preserves the lower-level source error chain.
+- Tracing spans on `KnownHosts::check()`, `add_entry()`, `save()`, `load()`,
+  `Shell::open()`, `Subsystem::open()`, and `SftpClient::open()`.
+- Unit tests for `SftpOpenMode` (6 constants, bit-or chaining, default),
+  `SftpDirEntry` (constructors, accessors, debug), and `SftpMetadata` (new,
+  default, builders, Display format) in `sftp/types.rs` (21 new tests).
+- Unit tests for `SftpClientRuntime` abort_reason wiring and SftpResponse enum
+  in `sftp/client.rs` (2 new tests).
+
+### Changed
+
+- SFTP `SftpFile` and `SftpDir` type-level docs now explicitly document that
+  the drop-based close may not execute during tokio runtime shutdown.
+- `Tunnel::close()` docs now document the same Drop best-effort limitation for
+  remote-forward cancel tasks.
+- Server `auth_publickey_offered` handler now includes a comment documenting
+  the username enumeration tradeoff.
+
+### Internal
+
+- `SftpErrorKind::UnsupportedVersion` changed to `SftpErrorKind::Unsupported`
+  in all `SftpServerHandler` trait method defaults (17 locations), correcting
+  the semantic category for "not implemented". The `UnsupportedVersion` kind
+  is retained for actual SFTP version mismatch errors.
+- `ServerHostKeySource::Debug` format string fixed (missing closing paren).
+- `#[non_exhaustive]` added to `SftpDirEntry`, `X11Params`, `PtyParams`,
+  `AuthDecision`, `ExecResponse`, `RemoteCommand`, `KnownHostsParseWarning`,
+  and `CommandOutput` for future extensibility.
+- `docs/dev/security.md`: Drop best-effort cleanup during runtime shutdown
+  documented; server `auth_publickey_offered` username enumeration tradeoff
+  documented.
+- `docs/dev/release.md`, `docs/dev/development-plan.md`, `docs/dev/roadmap.md`,
+  `AGENTS.md` §8, §11, §15, §16: version numbers, field order, method lists,
+  and illustrative types updated to match actual implementation.
+- `README.md`: Project Status section added with test count and CHANGELOG link.
+- `AGENTS.md` §26: Updated illustrative `version = "0.1.4"` to match current release.
+- `0.1.4` is the final release in the `0.1.x` series.
+
 ## [0.1.3] - 2026-05-17
 
 ### Added
@@ -425,3 +509,5 @@ changes may occur without a new major version.
 [0.1.0]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.0
 [0.1.1]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.1
 [0.1.2]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.2
+[0.1.3]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.3
+[0.1.4]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.4

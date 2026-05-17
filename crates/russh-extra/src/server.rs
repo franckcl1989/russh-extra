@@ -978,7 +978,7 @@ impl ServerHostKeySource {
 impl fmt::Debug for ServerHostKeySource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Loaded(_) => f.write_str("Loaded(ServerHostKey(***)"),
+            Self::Loaded(_) => f.write_str("Loaded(ServerHostKey(***))"),
             Self::OpenSshFile(path) => f.debug_tuple("OpenSshFile").field(path).finish(),
         }
     }
@@ -1017,6 +1017,7 @@ impl AuthContext {
 
 /// Authentication decision returned by server auth handlers.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
 pub struct AuthDecision {
     accepted: bool,
 }
@@ -1203,6 +1204,7 @@ impl ExecCommand {
 
 /// Buffered response for a server-side exec request.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct ExecResponse {
     accepted: bool,
     stdout: Bytes,
@@ -1408,6 +1410,7 @@ pub struct ShellContext {
 
 /// Pseudo-terminal parameters from a PTY request.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct PtyParams {
     /// Terminal type.
     pub term: String,
@@ -2206,6 +2209,12 @@ impl server::Handler for HighLevelRusshHandler {
         }
     }
 
+    // Note: `auth_publickey_offered` unconditionally returns `Accept`,
+    // telling the client "yes, try to prove key ownership" for any user.
+    // This leaks whether a user exists on the server (username enumeration).
+    // The actual access decision is made by `auth_publickey` after signature
+    // verification.  To fully block enumeration, use a server-side firewall
+    // or rate-limiting layer; `russh` does not offer per-user offer-gating.
     async fn auth_publickey_offered(
         &mut self,
         _user: &str,

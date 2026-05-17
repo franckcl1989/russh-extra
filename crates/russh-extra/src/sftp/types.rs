@@ -11,9 +11,11 @@ use crate::sftp::packet::SftpFileAttrs as PacketAttrs;
 /// A remote file handle obtained from `SftpClient::open()`.
 ///
 /// Closing the file is best-effort on drop: if the file is dropped
-/// without calling `close()`, the close request is sent but the
-/// response is not awaited.  Calling `close()` explicitly prevents
-/// the drop-based close from firing.
+/// without calling [`close`](SftpFile::close), the close request is
+/// sent but the response is not awaited. During tokio runtime shutdown,
+/// the spawned close task may not execute and the remote file handle
+/// may leak. Always call [`close`](SftpFile::close) explicitly before
+/// dropping to guarantee cleanup.
 pub struct SftpFile {
     handle: String,
     client: crate::sftp::client::SftpClientRuntime,
@@ -50,7 +52,9 @@ impl SftpFile {
     ///
     /// After `close()` returns, the file handle is invalid and no
     /// further operations should be performed on it.  Calling `close()`
-    /// explicitly prevents the best-effort drop-based close from firing.
+    /// explicitly prevents the best-effort drop-based close from firing
+    /// and guarantees the remote file handle is released even during
+    /// tokio runtime shutdown.
     pub async fn close(mut self) -> crate::Result<()> {
         self.closed = true;
         self.client.close(&self.handle).await
@@ -90,6 +94,11 @@ impl Drop for SftpFile {
 }
 
 /// A remote directory handle from `SftpClient::opendir()`.
+///
+/// Closing the directory is best-effort on drop (same caveats as
+/// [`SftpFile`]): during tokio runtime shutdown the spawned close
+/// task may not execute. Always call [`close`](SftpDir::close)
+/// explicitly before dropping.
 pub struct SftpDir {
     handle: String,
     client: crate::sftp::client::SftpClientRuntime,
@@ -133,7 +142,9 @@ impl SftpDir {
     ///
     /// After `close()` returns, the directory handle is invalid and no
     /// further operations should be performed on it.  Calling `close()`
-    /// explicitly prevents the best-effort drop-based close from firing.
+    /// explicitly prevents the best-effort drop-based close from firing
+    /// and guarantees the remote handle is released even during tokio
+    /// runtime shutdown.
     pub async fn close(mut self) -> crate::Result<()> {
         self.closed = true;
         self.client.close(&self.handle).await
@@ -164,6 +175,7 @@ impl Drop for SftpDir {
 
 /// A single directory entry.
 #[derive(Clone, Debug)]
+#[non_exhaustive]
 pub struct SftpDirEntry {
     filename: String,
     longname: String,
@@ -411,5 +423,180 @@ impl std::ops::BitOr for SftpOpenMode {
 
     fn bitor(self, rhs: Self) -> Self {
         Self(self.0 | rhs.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── SftpOpenMode ────────────────────────────────────────────────
+
+    #[test]
+    fn open_mode_constants_have_correct_values() {
+        assert_eq!(SftpOpenMode::READ.bits(), 0x00000001);
+        assert_eq!(SftpOpenMode::WRITE.bits(), 0x00000002);
+        assert_eq!(SftpOpenMode::APPEND.bits(), 0x00000004);
+        assert_eq!(SftpOpenMode::CREATE.bits(), 0x00000008);
+        assert_eq!(SftpOpenMode::TRUNCATE.bits(), 0x00000010);
+        assert_eq!(SftpOpenMode::EXCLUSIVE.bits(), 0x00000020);
+    }
+
+    #[test]
+    fn open_mode_default_is_zero() {
+        assert_eq!(SftpOpenMode::default().bits(), 0);
+    }
+
+    #[test]
+    fn open_mode_bit_or_combines_flags() {
+        let rw = SftpOpenMode::READ | SftpOpenMode::WRITE;
+        assert_eq!(rw.bits(), 0x00000003);
+    }
+
+    #[test]
+    fn open_mode_bit_or_chains_multiple() {
+        let flags = SftpOpenMode::READ
+            | SftpOpenMode::WRITE
+            | SftpOpenMode::CREATE
+            | SftpOpenMode::TRUNCATE;
+        assert_eq!(flags.bits(), 0x0000001B);
+    }
+
+    // ── SftpDirEntry ────────────────────────────────────────────────
+
+    #[test]
+    fn dir_entry_new_sets_fields() {
+        let entry = SftpDirEntry::new("file.txt", "long format", SftpMetadata::default());
+        assert_eq!(entry.filename(), "file.txt");
+        assert_eq!(entry.longname(), "long format");
+    }
+
+    #[test]
+    fn dir_entry_metadata_accessor() {
+        let meta = SftpMetadata::new(Some(1024), None, None, Some(0o644), None, None);
+        let entry = SftpDirEntry::new("f", "l", meta.clone());
+        assert_eq!(entry.metadata().size(), meta.size());
+        assert_eq!(entry.metadata().permissions(), meta.permissions());
+    }
+
+    #[test]
+    fn dir_entry_debug_format() {
+        let entry = SftpDirEntry::new(
+            "hello.txt",
+            "-rw-r--r-- 1 user group 0 Jan 1 1970 hello.txt",
+            SftpMetadata::default(),
+        );
+        let debug = format!("{entry:?}");
+        assert!(debug.contains("hello.txt"));
+    }
+
+    // ── SftpMetadata ────────────────────────────────────────────────
+
+    #[test]
+    fn metadata_new_stores_fields() {
+        let meta = SftpMetadata::new(
+            Some(4096),
+            Some(1000),
+            Some(1000),
+            Some(0o755),
+            Some(1_700_000_000),
+            Some(1_700_000_100),
+        );
+        assert_eq!(meta.size(), Some(4096));
+        assert_eq!(meta.uid(), Some(1000));
+        assert_eq!(meta.gid(), Some(1000));
+        assert_eq!(meta.permissions(), Some(0o755));
+        assert_eq!(meta.accessed(), Some(1_700_000_000));
+        assert_eq!(meta.modified(), Some(1_700_000_100));
+    }
+
+    #[test]
+    fn metadata_new_none_fields() {
+        let meta = SftpMetadata::new(None, None, None, None, None, None);
+        assert_eq!(meta.size(), None);
+        assert_eq!(meta.uid(), None);
+        assert_eq!(meta.gid(), None);
+        assert_eq!(meta.permissions(), None);
+        assert_eq!(meta.accessed(), None);
+        assert_eq!(meta.modified(), None);
+    }
+
+    #[test]
+    fn metadata_default_is_all_none() {
+        let meta = SftpMetadata::default();
+        assert_eq!(meta.size(), None);
+        assert_eq!(meta.uid(), None);
+        assert_eq!(meta.permissions(), None);
+    }
+
+    #[test]
+    fn metadata_with_size() {
+        let meta = SftpMetadata::default().with_size(2048);
+        assert_eq!(meta.size(), Some(2048));
+    }
+
+    #[test]
+    fn metadata_with_permissions() {
+        let meta = SftpMetadata::default().with_permissions(0o600);
+        assert_eq!(meta.permissions(), Some(0o600));
+    }
+
+    #[test]
+    fn metadata_with_uid_gid() {
+        let meta = SftpMetadata::default().with_uid_gid(500, 500);
+        assert_eq!(meta.uid(), Some(500));
+        assert_eq!(meta.gid(), Some(500));
+    }
+
+    #[test]
+    fn metadata_with_accessed() {
+        let meta = SftpMetadata::default().with_accessed(1_700_000_000);
+        assert_eq!(meta.accessed(), Some(1_700_000_000));
+    }
+
+    #[test]
+    fn metadata_with_modified() {
+        let meta = SftpMetadata::default().with_modified(1_700_000_100);
+        assert_eq!(meta.modified(), Some(1_700_000_100));
+    }
+
+    #[test]
+    fn metadata_builder_chained() {
+        let meta = SftpMetadata::default()
+            .with_size(1024)
+            .with_permissions(0o644)
+            .with_uid_gid(1000, 1000);
+        assert_eq!(meta.size(), Some(1024));
+        assert_eq!(meta.permissions(), Some(0o644));
+        assert_eq!(meta.uid(), Some(1000));
+        assert_eq!(meta.gid(), Some(1000));
+        assert_eq!(meta.accessed(), None);
+    }
+
+    #[test]
+    fn metadata_display_full() {
+        let meta = SftpMetadata::new(Some(1024), Some(1000), Some(1000), Some(0o755), None, None);
+        let display = format!("{meta}");
+        assert!(display.contains("size=1024"));
+        assert!(display.contains("perm=755"));
+        assert!(display.contains("uid=1000"));
+        assert!(display.contains("gid=1000"));
+    }
+
+    #[test]
+    fn metadata_display_empty() {
+        let meta = SftpMetadata::default();
+        let display = format!("{meta}");
+        assert_eq!(display, "SftpMetadata { }");
+    }
+
+    #[test]
+    fn metadata_display_partial() {
+        let meta = SftpMetadata::default().with_size(555);
+        let display = format!("{meta}");
+        assert!(display.contains("size=555"));
+        assert!(!display.contains("perm"));
+        assert!(!display.contains("uid"));
+        assert!(!display.contains("gid"));
     }
 }

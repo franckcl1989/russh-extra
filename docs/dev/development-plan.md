@@ -9,8 +9,10 @@ The repository has completed the 0.1.0 release (first client and server runtime
 slices), the 0.1.1 hardening release (documentation governance, SFTP error
 mapping, StreamLocal lifecycle hardening, known-hosts edge cases), the 0.1.2
 hardening release (security fixes, data-loss bugs, API contract fixes, small
-missing features, debug redaction tests), and the 0.1.3 hardening release (test
-hardening, API completions, documentation drift fixes, dependency update).
+missing features, debug redaction tests), the 0.1.3 hardening release (test
+hardening, API completions, documentation drift fixes, dependency update),
+and the 0.1.4 hardening release (Windows CI fix, timeout wiring, SFTP error
+quality, base64 data integrity, tracing coverage, 284 tests).
 
 The next gate is `0.2`: deferred features including hashed and wildcard
 known-hosts matching, dynamic SOCKS forwarding, SFTP v4+ extensions, and
@@ -135,8 +137,9 @@ Done when:
 
 ## Immediate Backlog
 
-The version-specific `0.1.3` scope is completed. Remaining work is tracked in the
-deferred items in [`roadmap.md`](roadmap.md).
+The version-specific `0.1.4` scope is completed. `0.1.4` is the final release
+in the `0.1.x` series. Remaining work is tracked in the deferred items in
+[`roadmap.md`](roadmap.md).
 
 Completed in 0.1.1: documentation reconciliation and governance drift fix,
 forwarding lifecycle tests (StreamLocal close/abort), known-hosts edge-case
@@ -149,7 +152,7 @@ short-circuit), API contract fixes (Credential::PartialEq, Endpoint::Display,
 tilde expansion, TerminalMode variants, comma-separated known-hosts parsing),
 debug redaction tests.
 
-Deferred beyond `0.1.2`: large data tests, ShellAsyncIo lifecycle tests,
+Deferred beyond `0.1`: large data tests, ShellAsyncIo lifecycle tests,
 remaining SftpServerHandler method coverage, hashed known-hosts matching/writing,
 wildcard known-hosts matching, dynamic SOCKS-style forwarding, SFTP v4+
 extensions.
