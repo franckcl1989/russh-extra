@@ -28,9 +28,23 @@ fn terminal_mode_to_pty(mode: russh_extra_core::TerminalMode) -> Option<(russh::
         russh_extra_core::TerminalMode::EndOfFile => Some((russh::Pty::VEOF, 0)),
         russh_extra_core::TerminalMode::InputSpeed => Some((russh::Pty::TTY_OP_ISPEED, 0)),
         russh_extra_core::TerminalMode::OutputSpeed => Some((russh::Pty::TTY_OP_OSPEED, 0)),
+        russh_extra_core::TerminalMode::Echo => Some((russh::Pty::ECHO, 0)),
+        russh_extra_core::TerminalMode::EchoErase => Some((russh::Pty::ECHOE, 0)),
+        russh_extra_core::TerminalMode::EchoKill => Some((russh::Pty::ECHOK, 0)),
+        russh_extra_core::TerminalMode::EchoNl => Some((russh::Pty::ECHONL, 0)),
+        russh_extra_core::TerminalMode::CanonicalInput => Some((russh::Pty::ICANON, 0)),
+        russh_extra_core::TerminalMode::SigCheck => Some((russh::Pty::ISIG, 0)),
+        russh_extra_core::TerminalMode::CrToNlInput => Some((russh::Pty::ICRNL, 0)),
+        russh_extra_core::TerminalMode::NlToCrInput => Some((russh::Pty::INLCR, 0)),
+        russh_extra_core::TerminalMode::IgnoreCrInput => Some((russh::Pty::IGNCR, 0)),
+        russh_extra_core::TerminalMode::PostProcessOutput => Some((russh::Pty::OPOST, 0)),
+        russh_extra_core::TerminalMode::NlToCrNlOutput => Some((russh::Pty::ONLCR, 0)),
+        russh_extra_core::TerminalMode::CrToNlOutput => Some((russh::Pty::OCRNL, 0)),
+        russh_extra_core::TerminalMode::NoCrOnNl => Some((russh::Pty::ONLRET, 0)),
         russh_extra_core::TerminalMode::Custom(opcode) => {
             russh::Pty::from_u8(opcode).map(|pty| (pty, 0))
         }
+        _ => None,
     }
 }
 
@@ -45,7 +59,7 @@ fn build_terminal_modes(pty: &Pty) -> Vec<(russh::Pty, u32)> {
 }
 
 /// X11 forwarding parameters.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct X11Params {
     /// Whether the server should accept a single X11 connection.
     pub single_connection: bool,
@@ -91,6 +105,17 @@ impl X11Params {
             cookie: cookie.into(),
             screen,
         }
+    }
+}
+
+impl fmt::Debug for X11Params {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("X11Params")
+            .field("single_connection", &self.single_connection)
+            .field("protocol", &self.protocol)
+            .field("cookie", &"<redacted>")
+            .field("screen", &self.screen)
+            .finish()
     }
 }
 
@@ -249,9 +274,8 @@ impl ShellHandle {
         let exit = Arc::new(Mutex::new(CommandExit::Missing));
 
         let exit_clone = exit.clone();
-        let cmd_tx_clone = cmd_tx.clone();
         tokio::spawn(async move {
-            run_channel_bridge(self.channel, read_tx, cmd_rx, cmd_tx_clone, exit_clone).await;
+            run_channel_bridge(self.channel, read_tx, cmd_rx, exit_clone).await;
         });
 
         ShellAsyncIo {
@@ -871,8 +895,7 @@ async fn run_channel_bridge(
     mut channel: russh::Channel<russh::client::Msg>,
     read_tx: mpsc::UnboundedSender<Vec<u8>>,
     mut cmd_rx: mpsc::UnboundedReceiver<ShellCmd>,
-    _cmd_tx: mpsc::UnboundedSender<ShellCmd>,
-    _exit: Arc<Mutex<CommandExit>>,
+    exit: Arc<Mutex<CommandExit>>,
 ) {
     loop {
         tokio::select! {
@@ -883,11 +906,14 @@ async fn run_channel_bridge(
                     {
                         break;
                     }
+                    Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
+                        let _ = read_tx.send(data.to_vec());
+                    }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
-                        *_exit.lock().await = CommandExit::Status(exit_status);
+                        *exit.lock().await = CommandExit::Status(exit_status);
                     }
                     Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
-                        *_exit.lock().await = CommandExit::Signal(
+                        *exit.lock().await = CommandExit::Signal(
                             crate::client::signal_to_name(signal_name),
                         );
                     }
@@ -971,6 +997,77 @@ mod tests {
     }
 
     #[test]
+    fn terminal_mode_new_variants_map_correctly() {
+        use russh_extra_core::TerminalMode;
+
+        assert!(
+            terminal_mode_to_pty(TerminalMode::Echo)
+                .map(|(p, _)| p == russh::Pty::ECHO)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::EchoErase)
+                .map(|(p, _)| p == russh::Pty::ECHOE)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::EchoKill)
+                .map(|(p, _)| p == russh::Pty::ECHOK)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::EchoNl)
+                .map(|(p, _)| p == russh::Pty::ECHONL)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::CanonicalInput)
+                .map(|(p, _)| p == russh::Pty::ICANON)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::SigCheck)
+                .map(|(p, _)| p == russh::Pty::ISIG)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::CrToNlInput)
+                .map(|(p, _)| p == russh::Pty::ICRNL)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::NlToCrInput)
+                .map(|(p, _)| p == russh::Pty::INLCR)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::IgnoreCrInput)
+                .map(|(p, _)| p == russh::Pty::IGNCR)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::PostProcessOutput)
+                .map(|(p, _)| p == russh::Pty::OPOST)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::NlToCrNlOutput)
+                .map(|(p, _)| p == russh::Pty::ONLCR)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::CrToNlOutput)
+                .map(|(p, _)| p == russh::Pty::OCRNL)
+                .unwrap_or(false)
+        );
+        assert!(
+            terminal_mode_to_pty(TerminalMode::NoCrOnNl)
+                .map(|(p, _)| p == russh::Pty::ONLRET)
+                .unwrap_or(false)
+        );
+    }
+
+    #[test]
     fn terminal_mode_custom_returns_none_for_invalid() {
         assert!(terminal_mode_to_pty(TerminalMode::Custom(255)).is_none());
     }
@@ -1043,6 +1140,15 @@ mod tests {
         assert_eq!(params.protocol, "XDM-AUTHORIZATION-1");
         assert_eq!(params.cookie, "deadbeef");
         assert_eq!(params.screen, 1);
+    }
+
+    #[test]
+    fn x11_params_debug_redacts_cookie() {
+        let params = X11Params::with_cookie("MIT-MAGIC-COOKIE-1", "deadbeef1234", 0);
+        let debug = format!("{:?}", params);
+        assert!(debug.contains("X11Params"));
+        assert!(!debug.contains(&params.cookie), "cookie leaked: {debug}");
+        assert!(debug.contains("<redacted>"));
     }
 
     #[test]

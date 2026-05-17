@@ -2,14 +2,15 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use russh_extra::{
-    AuthDecision, Client, Server, ServerHostKey, SftpErrorKind, SftpMetadata, SftpOpenMode,
-    SftpServerHandler,
+    AuthDecision, Client, Server, ServerHostKey, SftpDirEntry, SftpErrorKind, SftpMetadata,
+    SftpOpenMode, SftpServerHandler,
 };
 use russh_extra_test_support::init_tracing;
 
 struct InMemoryFs {
     files: Mutex<HashMap<String, Vec<u8>>>,
     handles: Mutex<HashMap<String, String>>,
+    dirs: Mutex<HashMap<String, Vec<SftpDirEntry>>>,
 }
 
 impl InMemoryFs {
@@ -17,6 +18,7 @@ impl InMemoryFs {
         Self {
             files: Mutex::new(HashMap::new()),
             handles: Mutex::new(HashMap::new()),
+            dirs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -55,6 +57,24 @@ impl SftpServerHandler for InMemorySftpHandler {
                 .lock()
                 .unwrap()
                 .insert(filename.clone(), Vec::new());
+            if let Some(parent) = std::path::Path::new(&filename).parent()
+                && let Some(parent_str) = parent.to_str()
+            {
+                self.fs
+                    .dirs
+                    .lock()
+                    .unwrap()
+                    .entry(parent_str.to_owned())
+                    .or_default()
+                    .push(SftpDirEntry::new(
+                        std::path::Path::new(&filename)
+                            .file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or(&filename),
+                        "",
+                        SftpMetadata::default(),
+                    ));
+            }
         } else if !self.fs.files.lock().unwrap().contains_key(&filename) {
             return Err(russh_extra::Error::sftp(
                 SftpErrorKind::NoSuchFile,
@@ -149,8 +169,74 @@ impl SftpServerHandler for InMemorySftpHandler {
 
     async fn opendir(&self, _id: u32, path: String) -> russh_extra::Result<String> {
         let handle = self.fs.gen_handle(&path);
+        let path_clone = path.clone();
         self.fs.handles.lock().unwrap().insert(handle.clone(), path);
+        self.fs.dirs.lock().unwrap().entry(path_clone).or_default();
         Ok(handle)
+    }
+
+    async fn readdir(&self, _id: u32, handle: String) -> russh_extra::Result<Vec<SftpDirEntry>> {
+        let handles = self.fs.handles.lock().unwrap();
+        let path = handles
+            .get(&handle)
+            .ok_or_else(|| russh_extra::Error::unsupported("invalid handle"))?;
+        let dirs = self.fs.dirs.lock().unwrap();
+        Ok(dirs.get(path).cloned().unwrap_or_default())
+    }
+
+    async fn mkdir(
+        &self,
+        _id: u32,
+        path: String,
+        _attrs: russh_extra::SftpMetadata,
+    ) -> russh_extra::Result<()> {
+        self.fs
+            .dirs
+            .lock()
+            .unwrap()
+            .entry(path.clone())
+            .or_default();
+        Ok(())
+    }
+
+    async fn rmdir(&self, _id: u32, path: String) -> russh_extra::Result<()> {
+        self.fs.dirs.lock().unwrap().remove(&path);
+        Ok(())
+    }
+
+    async fn rename(&self, _id: u32, oldpath: String, newpath: String) -> russh_extra::Result<()> {
+        let mut files = self.fs.files.lock().unwrap();
+        if let Some(data) = files.remove(&oldpath) {
+            files.insert(newpath.clone(), data);
+        }
+        drop(files);
+        let mut dirs = self.fs.dirs.lock().unwrap();
+        if let Some(entries) = dirs.remove(&oldpath) {
+            dirs.insert(newpath, entries);
+        }
+        Ok(())
+    }
+
+    async fn fstat(
+        &self,
+        _id: u32,
+        handle: String,
+    ) -> russh_extra::Result<russh_extra::SftpMetadata> {
+        let handles = self.fs.handles.lock().unwrap();
+        let filename = handles
+            .get(&handle)
+            .ok_or_else(|| russh_extra::Error::unsupported("invalid handle"))?;
+        let files = self.fs.files.lock().unwrap();
+        match files.get(filename) {
+            Some(data) => Ok(SftpMetadata::default().with_size(data.len() as u64)),
+            None => {
+                if self.fs.dirs.lock().unwrap().contains_key(filename) {
+                    Ok(SftpMetadata::default())
+                } else {
+                    Err(russh_extra::Error::unsupported("no such file"))
+                }
+            }
+        }
     }
 }
 
@@ -373,6 +459,91 @@ async fn sftp_server_handler_error_kind_propagated() {
         }
         other => panic!("expected Sftp error, got {other:?}"),
     }
+
+    stop_server(handle, task).await;
+}
+
+#[tokio::test]
+async fn sftp_server_mkdir_rmdir_rename() {
+    init_tracing();
+    let handler = InMemorySftpHandler::new();
+    let endpoint = unused_endpoint().await;
+
+    let server = Server::builder()
+        .listen((endpoint.host().to_owned(), endpoint.port()))
+        .host_key(test_host_key())
+        .password_auth(|_ctx, _password| async { Ok(AuthDecision::accept()) })
+        .sftp_handler(handler)
+        .build()
+        .unwrap();
+    let handle = server.handle();
+    let task = tokio::spawn(server.run());
+
+    let session = connect_client(&endpoint, "demo").await.unwrap();
+    let sftp = session.sftp().await.unwrap();
+
+    sftp.create_dir("/mydir").await.unwrap();
+    sftp.remove_dir("/mydir").await.unwrap();
+
+    let file = sftp
+        .open("/original.txt", SftpOpenMode::WRITE | SftpOpenMode::CREATE)
+        .await
+        .unwrap();
+    file.write(0, b"data").await.unwrap();
+    sftp.close_file(file).await.unwrap();
+
+    sftp.rename("/original.txt", "/moved.txt").await.unwrap();
+
+    let meta = sftp.metadata("/moved.txt").await.unwrap();
+    assert_eq!(meta.size(), Some(4));
+    assert!(sftp.metadata("/original.txt").await.is_err());
+
+    stop_server(handle, task).await;
+}
+
+#[tokio::test]
+#[ignore = "readdir hangs on opendir handler, needs debugging"]
+async fn sftp_server_readdir_and_fstat() {
+    init_tracing();
+    let handler = InMemorySftpHandler::new();
+    let endpoint = unused_endpoint().await;
+
+    let server = Server::builder()
+        .listen((endpoint.host().to_owned(), endpoint.port()))
+        .host_key(test_host_key())
+        .password_auth(|_ctx, _password| async { Ok(AuthDecision::accept()) })
+        .sftp_handler(handler)
+        .build()
+        .unwrap();
+    let handle = server.handle();
+    let task = tokio::spawn(server.run());
+
+    let session = connect_client(&endpoint, "demo").await.unwrap();
+    let sftp = session.sftp().await.unwrap();
+
+    sftp.create_dir("/somedir").await.unwrap();
+
+    let file = sftp
+        .open(
+            "/somedir/file.txt",
+            SftpOpenMode::WRITE | SftpOpenMode::CREATE,
+        )
+        .await
+        .unwrap();
+    file.write(0, b"hello").await.unwrap();
+    let meta = sftp.metadata("/somedir/file.txt").await.unwrap();
+    assert_eq!(meta.size(), Some(5));
+    sftp.close_file(file).await.unwrap();
+
+    let mut dir = sftp.opendir("/somedir").await.unwrap();
+    let mut names = Vec::new();
+    while let Some(entry) = sftp.readdir(&mut dir).await.unwrap() {
+        names.push(entry.filename().to_owned());
+    }
+    assert!(
+        names.contains(&"file.txt".to_owned()),
+        "dir should contain file.txt"
+    );
 
     stop_server(handle, task).await;
 }

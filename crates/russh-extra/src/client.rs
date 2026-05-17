@@ -373,6 +373,7 @@ impl ClientBuilder {
     }
 
     /// Sets strict host key checking.
+    #[allow(deprecated)]
     pub fn strict_host_key_checking(mut self, enabled: bool) -> Self {
         self.config.set_strict_host_key_checking(enabled);
         self
@@ -1824,13 +1825,23 @@ impl CommandOutput {
     pub fn success(&self) -> bool {
         self.exit.success()
     }
+
+    /// Returns `Ok(self)` if the command exited successfully, or an error otherwise.
+    pub fn check_success(self) -> Result<Self> {
+        if self.exit.success() {
+            Ok(self)
+        } else {
+            Err(Error::command_exit(self.exit))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::Session;
     use russh_extra_core::{
-        CommandLimits, Endpoint, ForwardSpec, HostKeyPolicy, Pty, SessionId, TcpEndpoint,
+        CommandExit, CommandLimits, Endpoint, ForwardSpec, HostKeyPolicy, Pty, SessionId,
+        TcpEndpoint,
     };
 
     #[test]
@@ -1940,5 +1951,31 @@ mod tests {
             client.x11_display.as_ref().unwrap().to_string_lossy(),
             "/tmp/.X11-unix/X0"
         );
+    }
+
+    #[test]
+    fn command_output_check_success_ok_when_exit_zero() {
+        let output =
+            super::CommandOutput::new(CommandExit::status(0), b"out".as_slice(), b"err".as_slice());
+        assert!(output.check_success().is_ok());
+    }
+
+    #[test]
+    fn command_output_check_success_err_when_exit_nonzero() {
+        let output = super::CommandOutput::new(
+            CommandExit::status(42),
+            b"out".as_slice(),
+            b"err".as_slice(),
+        );
+        let err = output.check_success().unwrap_err();
+        assert!(format!("{:?}", err).contains("CommandExit"));
+    }
+
+    #[test]
+    fn command_output_check_success_err_when_exit_missing() {
+        let output =
+            super::CommandOutput::new(CommandExit::Missing, b"out".as_slice(), b"".as_slice());
+        let err = output.check_success().unwrap_err();
+        assert!(format!("{:?}", err).contains("CommandExit"));
     }
 }

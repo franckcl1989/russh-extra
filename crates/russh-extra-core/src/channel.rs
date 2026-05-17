@@ -123,6 +123,7 @@ impl CommandExit {
 }
 
 /// Pseudo-terminal request.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pty {
@@ -198,6 +199,7 @@ impl Default for Pty {
 }
 
 /// Terminal mode opcode.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum TerminalMode {
@@ -215,6 +217,32 @@ pub enum TerminalMode {
     InputSpeed,
     /// Terminal output speed.
     OutputSpeed,
+    /// Echo characters.
+    Echo,
+    /// Erase previous character on display.
+    EchoErase,
+    /// Erase line on display.
+    EchoKill,
+    /// Echo newlines on display.
+    EchoNl,
+    /// Canonical input mode.
+    CanonicalInput,
+    /// Signal checking.
+    SigCheck,
+    /// Map CR to NL on input.
+    CrToNlInput,
+    /// Map NL to CR on input.
+    NlToCrInput,
+    /// Ignore CR on input.
+    IgnoreCrInput,
+    /// Post-process output.
+    PostProcessOutput,
+    /// Map NL to CR-NL on output.
+    NlToCrNlOutput,
+    /// Map CR to NL on output.
+    CrToNlOutput,
+    /// Do not output CR on NL.
+    NoCrOnNl,
     /// Custom opcode.
     Custom(u8),
 }

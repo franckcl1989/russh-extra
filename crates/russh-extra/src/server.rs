@@ -1103,7 +1103,7 @@ pub enum KeyboardInteractiveResponse {
 /// The handler receives the submethods requested by the client,
 /// the auth session context, and (when present) the user's responses
 /// to the immediately preceding prompts.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct KeyboardInteractiveContext {
     /// The authentication session context.
     pub session: AuthContext,
@@ -1112,6 +1112,19 @@ pub struct KeyboardInteractiveContext {
     /// User responses to the previous prompts, if any.
     /// Empty for the initial request.
     pub responses: Vec<Bytes>,
+}
+
+impl fmt::Debug for KeyboardInteractiveContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("KeyboardInteractiveContext")
+            .field("session", &self.session)
+            .field("submethods", &self.submethods)
+            .field(
+                "responses",
+                &format_args!("<redacted {} responses>", self.responses.len()),
+            )
+            .finish()
+    }
 }
 
 /// Server exec context passed to command handlers.
@@ -1526,7 +1539,7 @@ pub struct DirectStreamLocalContext {
 }
 
 /// Context for an X11 forwarding channel request.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct X11RequestContext {
     /// Session identifier.
     pub session_id: SessionId,
@@ -1544,6 +1557,21 @@ pub struct X11RequestContext {
     pub screen_number: u32,
     /// Server handle for lifecycle operations.
     pub server: ServerHandle,
+}
+
+impl fmt::Debug for X11RequestContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("X11RequestContext")
+            .field("session_id", &self.session_id)
+            .field("username", &self.username)
+            .field("channel", &self.channel)
+            .field("single_connection", &self.single_connection)
+            .field("auth_protocol", &self.auth_protocol)
+            .field("auth_cookie", &"<redacted>")
+            .field("screen_number", &self.screen_number)
+            .field("server", &self.server)
+            .finish()
+    }
 }
 
 /// Context for an X11 channel open request.
@@ -3018,6 +3046,7 @@ mod tests {
     use bytes::Bytes;
     use russh::keys::{Algorithm, PrivateKey};
     use russh_extra_core::{CommandExit, Error};
+    use tokio::sync::watch;
 
     fn test_host_key() -> ServerHostKey {
         let private_key = PrivateKey::random(&mut rand::rng(), Algorithm::Ed25519)
@@ -3082,5 +3111,55 @@ mod tests {
         assert_eq!(response.stderr_bytes().as_ref(), b"err\n");
         assert_eq!(response.exit_info(), &CommandExit::status(42));
         assert!(!ExecResponse::reject().is_accepted());
+    }
+
+    #[test]
+    fn keyboard_interactive_context_debug_redacts_responses() {
+        let (tx, _rx) = watch::channel(None);
+        let server_handle = super::ServerHandle { shutdown_tx: tx };
+        let auth = super::AuthContext {
+            session_id: russh_extra_core::SessionId::next(),
+            username: russh_extra_core::Username::from("testuser"),
+            peer_addr: None,
+            server: server_handle,
+        };
+        let ctx = super::KeyboardInteractiveContext {
+            session: auth,
+            submethods: String::new(),
+            responses: vec![Bytes::from_static(b"secret123")],
+        };
+        let debug = format!("{:?}", ctx);
+        assert!(!debug.contains("secret"), "responses leaked: {debug}");
+        assert!(debug.contains("<redacted"));
+    }
+
+    #[test]
+    fn x11_request_context_debug_redacts_cookie() {
+        let (tx, _rx) = watch::channel(None);
+        let server_handle = super::ServerHandle { shutdown_tx: tx };
+        let channel: russh::ChannelId = {
+            #[allow(unsafe_code)]
+            // SAFETY: ChannelId is a repr(transparent) newtype over u32.
+            // Transmuting u32 -> ChannelId is sound in test code.
+            unsafe {
+                std::mem::transmute::<u32, russh::ChannelId>(5)
+            }
+        };
+        let ctx = super::X11RequestContext {
+            session_id: russh_extra_core::SessionId::next(),
+            username: russh_extra_core::Username::from("testuser"),
+            channel,
+            single_connection: false,
+            auth_protocol: "MIT-MAGIC-COOKIE-1".into(),
+            auth_cookie: "deadbeef1234".into(),
+            screen_number: 0,
+            server: server_handle,
+        };
+        let debug = format!("{:?}", ctx);
+        assert!(
+            !debug.contains(&ctx.auth_cookie),
+            "auth cookie leaked: {debug}"
+        );
+        assert!(debug.contains("<redacted>"));
     }
 }

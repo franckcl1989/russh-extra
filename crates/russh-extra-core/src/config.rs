@@ -164,6 +164,7 @@ impl ClientConfig {
     }
 
     /// Sets strict host key checking.
+    #[deprecated = "use set_host_key_policy instead"]
     pub fn set_strict_host_key_checking(&mut self, enabled: bool) {
         self.host_key_policy = if enabled {
             HostKeyPolicy::Strict
@@ -351,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(deprecated)]
     fn disabling_strict_host_key_checking_sets_accept_any_policy() {
         let mut config = ClientConfig::default();
 
@@ -389,5 +391,14 @@ mod tests {
         assert!(!serialized.contains("secret"));
         assert!(!serialized.contains("credentials"));
         assert!(deserialized.credentials().is_empty());
+    }
+
+    #[test]
+    fn client_config_debug_does_not_expose_credential_content() {
+        let mut config = ClientConfig::new(Endpoint::new("example.com", 2222));
+        config.add_credential(crate::Credential::password("my-secret-password"));
+        let debug = format!("{:?}", config);
+        assert!(!debug.contains("my-secret-password"));
+        assert!(debug.contains("Password(***)"));
     }
 }

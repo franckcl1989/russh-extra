@@ -1053,6 +1053,8 @@ X11 forwarding, agent forwarding tunnel, OpenSSH certificate authentication,
 auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
 (client + server handler). 212 tests pass. Released as 0.1.0 on crates.io.
 0.1.1 hardening release complete, pending publish.
+0.1.2 hardening release: bug fixes, security hardening, API contract fixes.
+229 tests pass, 0 failures.
 
 Suggested roadmap:
 

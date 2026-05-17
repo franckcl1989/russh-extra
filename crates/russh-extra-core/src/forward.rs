@@ -14,6 +14,7 @@ pub enum ForwardDirection {
 }
 
 /// TCP endpoint used by forwarding.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct TcpEndpoint {
@@ -54,6 +55,7 @@ impl From<(String, u16)> for TcpEndpoint {
 }
 
 /// Unix-domain streamlocal forwarding endpoint.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct StreamLocalSpec {

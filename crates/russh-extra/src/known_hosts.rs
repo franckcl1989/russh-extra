@@ -54,10 +54,10 @@ impl KnownHostsEntry {
     }
 
     /// Parses a single `known_hosts` line.
-    fn parse(line: &str) -> Option<Self> {
+    fn parse(line: &str) -> Vec<Self> {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
-            return None;
+            return Vec::new();
         }
 
         let (revoked, rest) = parse_revoked_marker(trimmed);
@@ -65,14 +65,14 @@ impl KnownHostsEntry {
 
         let parts: Vec<&str> = rest.split_whitespace().collect();
         if parts.len() < 3 {
-            return None;
+            return Vec::new();
         }
 
-        let (hostname, port) = parse_host_pattern(parts[0])?;
+        let hosts = parse_host_pattern(parts[0]);
         let algorithm = parts[1].to_owned();
         let key_blob = match base64_decode_key(parts[2]) {
             Ok(blob) => blob,
-            Err(_) => return None,
+            Err(_) => return Vec::new(),
         };
         let comment = if parts.len() > 3 {
             Some(parts[3..].join(" "))
@@ -80,14 +80,17 @@ impl KnownHostsEntry {
             None
         };
 
-        Some(KnownHostsEntry {
-            hostname,
-            port,
-            algorithm,
-            key_blob,
-            comment,
-            revoked,
-        })
+        hosts
+            .into_iter()
+            .map(|(hostname, port)| KnownHostsEntry {
+                hostname,
+                port,
+                algorithm: algorithm.clone(),
+                key_blob: key_blob.clone(),
+                comment: comment.clone(),
+                revoked,
+            })
+            .collect()
     }
 }
 
@@ -107,27 +110,29 @@ fn parse_cert_authority_marker(line: &str) -> (bool, &str) {
     }
 }
 
-fn parse_host_pattern(pattern: &str) -> Option<(String, u16)> {
+fn parse_host_pattern(pattern: &str) -> Vec<(String, u16)> {
     if let Some(inner) = pattern.strip_prefix('[') {
         if let Some(before_close) = inner.strip_suffix(']') {
-            if let Some((host, port_str)) = before_close.rsplit_once(':') {
-                let port: u16 = port_str.parse().ok()?;
-                return Some((host.to_owned(), port));
+            if let Some((host, port_str)) = before_close.rsplit_once(':')
+                && let Ok(port) = port_str.parse::<u16>()
+            {
+                return vec![(host.to_owned(), port)];
             }
-            return Some((before_close.to_owned(), 0));
+            return vec![(before_close.to_owned(), 0)];
         }
-        if let Some((host, port_str)) = inner.rsplit_once("]:") {
-            let port: u16 = port_str.parse().ok()?;
+        if let Some((host, port_str)) = inner.rsplit_once("]:")
+            && let Ok(port) = port_str.parse::<u16>()
+        {
             let host = host.strip_suffix(']').unwrap_or(host);
-            return Some((host.to_owned(), port));
+            return vec![(host.to_owned(), port)];
         }
-        return Some((inner.to_owned(), 0));
+        return vec![(inner.to_owned(), 0)];
     }
 
-    let parts: Vec<&str> = pattern.split(',').collect();
-    let first = parts.first()?;
-
-    Some(((*first).to_owned(), 0))
+    pattern
+        .split(',')
+        .map(|host| (host.to_owned(), 0))
+        .collect()
 }
 
 fn base64_decode_key(encoded: &str) -> Result<Vec<u8>, ()> {
@@ -242,6 +247,9 @@ impl KnownHosts {
             return KnownHostStatus::NotFound;
         };
 
+        let mut saw_candidate_match = false;
+        let mut saw_key_mismatch = false;
+
         for entry in &inner.entries {
             if !host_matches(&entry.hostname, host) {
                 continue;
@@ -255,13 +263,19 @@ impl KnownHosts {
             }
 
             if entry.key_blob == key_bytes {
-                return KnownHostStatus::Match;
+                saw_candidate_match = true;
+            } else {
+                saw_key_mismatch = true;
             }
-
-            return KnownHostStatus::Changed;
         }
 
-        KnownHostStatus::NotFound
+        if saw_candidate_match {
+            KnownHostStatus::Match
+        } else if saw_key_mismatch {
+            KnownHostStatus::Changed
+        } else {
+            KnownHostStatus::NotFound
+        }
     }
 
     /// Adds or updates an entry for a host.
@@ -409,8 +423,9 @@ fn parse_known_hosts_content(content: &str) -> (Vec<KnownHostsEntry>, Vec<KnownH
             continue;
         }
 
-        if let Some(entry) = KnownHostsEntry::parse(trimmed) {
-            entries.push(entry);
+        let parsed = KnownHostsEntry::parse(trimmed);
+        if !parsed.is_empty() {
+            entries.extend(parsed);
         } else {
             warnings.push(KnownHostsParseWarning {
                 line: index + 1,
@@ -509,7 +524,7 @@ mod tests {
         let key_b64 = "AAAAC3NzaC1lZDI1NTE5AAAAIGk8abcdefghi";
         let encoded = base64_encode(b"real-key-data");
         let line = format!("example.com ssh-ed25519 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.hostname(), "example.com");
         assert_eq!(entry.port(), 0);
@@ -523,7 +538,7 @@ mod tests {
     fn parses_bracketed_port_entry() {
         let encoded = base64_encode(b"real-key-data");
         let line = format!("[example.com]:2222 ssh-rsa {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.hostname(), "example.com");
         assert_eq!(entry.port(), 2222);
@@ -534,7 +549,7 @@ mod tests {
     fn parses_revoked_entry() {
         let encoded = base64_encode(b"revoked-key-data");
         let line = format!("@revoked example.com ssh-ed25519 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert!(entry.is_revoked());
     }
@@ -543,16 +558,16 @@ mod tests {
     fn parses_entry_with_comment() {
         let encoded = base64_encode(b"key-with-comment");
         let line = format!("example.com ssh-ed25519 {encoded} extra info here");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.comment(), Some("extra info here"));
     }
 
     #[test]
     fn skips_empty_and_comment_lines() {
-        assert!(KnownHostsEntry::parse("").is_none());
-        assert!(KnownHostsEntry::parse("  ").is_none());
-        assert!(KnownHostsEntry::parse("# example.com ssh-ed25519 key").is_none());
+        assert!(KnownHostsEntry::parse("").is_empty());
+        assert!(KnownHostsEntry::parse("  ").is_empty());
+        assert!(KnownHostsEntry::parse("# example.com ssh-ed25519 key").is_empty());
     }
 
     #[test]
@@ -661,16 +676,21 @@ mod tests {
     fn parses_comma_separated_hostname_line() {
         let encoded = base64_encode(b"comma-sep-key");
         let line = format!("host-a,host-b,host-c ssh-ed25519 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
-
-        assert_eq!(entry.hostname(), "host-a");
+        let entries = KnownHostsEntry::parse(&line);
+        assert_eq!(entries.len(), 3, "should produce one entry per host");
+        assert_eq!(entries[0].hostname(), "host-a");
+        assert_eq!(entries[1].hostname(), "host-b");
+        assert_eq!(entries[2].hostname(), "host-c");
+        for e in &entries {
+            assert_eq!(e.algorithm(), "ssh-ed25519");
+        }
     }
 
     #[test]
     fn parses_ip_address_entry() {
         let encoded = base64_encode(b"ip-addr-key");
         let line = format!("192.168.1.1 ssh-ed25519 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.hostname(), "192.168.1.1");
         assert_eq!(entry.port(), 0);
@@ -680,7 +700,7 @@ mod tests {
     fn parses_ecdsa_algorithm_entry() {
         let encoded = base64_encode(b"ecdsa-key-data");
         let line = format!("example.com ecdsa-sha2-nistp256 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.algorithm(), "ecdsa-sha2-nistp256");
     }
@@ -688,20 +708,20 @@ mod tests {
     #[test]
     fn rejects_line_with_missing_key_type() {
         let line = "example.com";
-        assert!(KnownHostsEntry::parse(line).is_none());
+        assert!(KnownHostsEntry::parse(line).is_empty());
     }
 
     #[test]
     fn rejects_line_with_invalid_base64() {
         let line = "example.com ssh-ed25519 not-valid-base64!!!";
-        assert!(KnownHostsEntry::parse(line).is_none());
+        assert!(KnownHostsEntry::parse(line).is_empty());
     }
 
     #[test]
     fn rejects_line_with_only_tag_and_key() {
         let encoded = base64_encode(b"only-two-parts");
         let line = format!("ssh-ed25519 {encoded}");
-        assert!(KnownHostsEntry::parse(&line).is_none());
+        assert!(KnownHostsEntry::parse(&line).is_empty());
     }
 
     #[test]
@@ -1239,7 +1259,7 @@ mod tests {
     fn known_hosts_entry_round_trip_through_parse() {
         let encoded = base64_encode(b"round-trip-key-data");
         let line = format!("@revoked [example.com]:2222 ssh-ed25519 {encoded} my comment");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.hostname(), "example.com");
         assert_eq!(entry.port(), 2222);
@@ -1262,7 +1282,7 @@ mod tests {
     fn ip_address_bracketed_port() {
         let encoded = base64_encode(b"ip-bracket-key");
         let line = format!("[192.168.1.1]:2222 ssh-ed25519 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.hostname(), "192.168.1.1");
         assert_eq!(entry.port(), 2222);
@@ -1278,7 +1298,7 @@ mod tests {
 
         let encoded = base64_encode(&public_key.to_bytes().unwrap());
         let line = format!("*.example.com ssh-ed25519 {encoded}");
-        let entry = KnownHostsEntry::parse(&line).unwrap();
+        let entry = KnownHostsEntry::parse(&line).into_iter().next().unwrap();
 
         assert_eq!(entry.hostname(), "*.example.com");
 
@@ -1374,6 +1394,33 @@ mod tests {
         assert!(
             content.contains("example.com ssh-ed25519"),
             "hostname should be plain text even when hash_hostnames is set (hashing not yet implemented)"
+        );
+    }
+
+    #[test]
+    fn check_finds_match_among_multiple_host_entries() {
+        let private_key1 =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key1 = private_key1.public_key().clone();
+
+        let private_key2 =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let public_key2 = private_key2.public_key().clone();
+
+        let store = KnownHosts::new();
+        store
+            .add_entry("example.com", 0, &public_key1, "ssh-ed25519")
+            .unwrap();
+        store
+            .add_entry("example.com", 0, &public_key2, "ssh-ed25519")
+            .unwrap();
+
+        assert_eq!(
+            store.check("example.com", 22, &public_key2),
+            KnownHostStatus::Match,
+            "should match second entry even when first entry has different key"
         );
     }
 }

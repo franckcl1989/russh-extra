@@ -49,6 +49,68 @@ changes may occur without a new major version.
 - SFTP server runtime maps typed handler errors to stable SFTP v3 status codes
   instead of collapsing all failures to `SSH_FX_FAILURE`.
 
+## [0.1.2] - UNRELEASED
+
+### Fixed
+
+- **Security**: `X11Params` no longer exposes the X11 authentication cookie in
+  `Debug` output. The cookie field is now redacted as `<redacted>`.
+- **Security**: `KeyboardInteractiveContext` no longer exposes user responses
+  (potentially passwords or 2FA codes) in `Debug` output. Responses are now
+  redacted.
+- **Security**: `X11RequestContext` no longer exposes the X11 authentication
+  cookie in `Debug` output.
+- **Data loss**: `ShellAsyncIo` no longer silently drops stderr data from the
+  SSH channel. `ChannelMsg::ExtendedData` is now routed to the read stream
+  (interleaved with stdout, matching `ShellHandle` behavior).
+- **Resource leak**: `ShellAsyncIo` bridge task now exits cleanly when the
+  `ShellAsyncIo` handle is dropped. Previously the bridge task held a
+  self-referencing sender and could never shut down.
+- **Correctness**: `KnownHosts::check()` no longer short-circuits on the first
+  key mismatch. When multiple entries exist for the same host (e.g. different
+  key types), all entries are now scanned. A match on any entry returns
+  `Match`; `Changed` is only returned when no entry's key matches.
+- **Correctness**: `Credential::PartialEq` for `KeyboardInteractive` variants
+  now returns `true` (previously always `false`), fixing `Eq` for
+  `ClientConfig` values that contain keyboard-interactive credentials.
+- `set_strict_host_key_checking` is now deprecated in favor of the more
+  expressive `set_host_key_policy`. The deprecated method is preserved for
+  backward compatibility.
+- `Endpoint::Display` now uses bracket notation for IPv6 addresses (e.g.
+  `[::1]:22`) via delegation to `authority()`, fixing IPv6 round-trip parsing.
+
+### Added
+
+- `CommandOutput::check_success(self) -> Result<Self>` returns the output on
+  success or an `Error::CommandExit` on non-zero or missing exit status.
+- `Identity::key_file()` now expands tilde (`~`) in the provided path.
+- `TerminalMode` now includes common SSH terminal modes: `Echo`, `EchoErase`,
+  `EchoKill`, `EchoNl`, `CanonicalInput`, `SigCheck`, `CrToNlInput`,
+  `NlToCrInput`, `IgnoreCrInput`, `PostProcessOutput`, `NlToCrNlOutput`,
+  `CrToNlOutput`, and `NoCrOnNl`.
+- `KnownHostsEntry::parse()` now produces one entry per comma-separated hostname
+  in the pattern field (e.g. `host-a,host-b,host-c` creates three entries).
+
+### Changed
+
+- `Pty`, `TcpEndpoint`, `StreamLocalSpec`, and `TerminalMode` are now marked
+  `#[non_exhaustive]` for future extensibility. Struct-literal construction of
+  `TcpEndpoint` and `StreamLocalSpec` is no longer supported; use the `new()`
+  constructors instead.
+- `KnownHostsEntry::parse()` now returns `Vec<KnownHostsEntry>` instead of
+  `Option<KnownHostsEntry>` to support multi-host patterns.
+
+### Internal
+
+- Added debug redaction tests for `X11Params`, `KeyboardInteractiveContext`,
+  `X11RequestContext`, and `ClientConfig`.
+- Added `credential_eq`, `endpoint_display_round_trip`, `tilde_expansion`,
+  `terminal_mode_mapping`, `check_success`, and known-hosts `check_finds_match`
+  unit tests.
+- Added SFTP server handler methods (`mkdir`, `rmdir`, `rename`, `readdir`,
+  `fstat`) to the integration test `InMemorySftpHandler` with corresponding
+  integration tests (6 tests, 5 passing, 1 gated behind `#[ignore]`).
+
 ## [0.1.0] - 2026-05-09
 
 ### Changed

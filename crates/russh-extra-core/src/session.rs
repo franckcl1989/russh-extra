@@ -66,7 +66,7 @@ impl Default for Endpoint {
 
 impl fmt::Display for Endpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.host, self.port)
+        f.write_str(&self.authority())
     }
 }
 
@@ -208,5 +208,36 @@ mod tests {
         let error = Endpoint::parse(":22").unwrap_err();
 
         assert!(error.to_string().contains("host cannot be empty"));
+    }
+
+    #[test]
+    fn endpoint_display_ipv6_round_trip() {
+        let ep = Endpoint::parse("[::1]:22").unwrap();
+        let formatted = ep.to_string();
+        assert_eq!(formatted, "[::1]:22", "Display should use bracketed IPv6");
+
+        let reparsed = Endpoint::parse(&formatted).unwrap();
+        assert_eq!(reparsed.host(), "::1");
+        assert_eq!(reparsed.port(), 22);
+    }
+
+    #[test]
+    fn endpoint_display_ipv4_round_trip() {
+        let ep = Endpoint::new("192.168.1.1", 2222);
+        let formatted = ep.to_string();
+        assert_eq!(formatted, "192.168.1.1:2222");
+        let reparsed = Endpoint::parse(&formatted).unwrap();
+        assert_eq!(reparsed.host(), "192.168.1.1");
+        assert_eq!(reparsed.port(), 2222);
+    }
+
+    #[test]
+    fn endpoint_display_hostname_round_trip() {
+        let ep = Endpoint::new("example.com", 22);
+        let formatted = ep.to_string();
+        assert_eq!(formatted, "example.com:22");
+        let reparsed = Endpoint::parse(&formatted).unwrap();
+        assert_eq!(reparsed.host(), "example.com");
+        assert_eq!(reparsed.port(), 22);
     }
 }

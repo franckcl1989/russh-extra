@@ -125,8 +125,9 @@ impl Identity {
 
     /// Creates a key-file identity.
     pub fn key_file(path: impl Into<PathBuf>) -> Self {
+        let path = expand_tilde(&path.into());
         Self::KeyFile {
-            path: path.into(),
+            path,
             passphrase: None,
         }
     }
@@ -285,7 +286,7 @@ impl PartialEq for Credential {
             (Self::Password(a), Self::Password(b)) => a == b,
             (Self::Identity(a), Self::Identity(b)) => a == b,
             (Self::None, Self::None) => true,
-            (Self::KeyboardInteractive(_), Self::KeyboardInteractive(_)) => false,
+            (Self::KeyboardInteractive(_), Self::KeyboardInteractive(_)) => true,
             _ => false,
         }
     }
@@ -361,7 +362,7 @@ fn validate_private_key_permissions(path: &Path) -> crate::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Credential, Identity, Password};
+    use super::{Credential, Identity, KeyboardInteractiveReply, Password};
 
     #[test]
     fn password_debug_redacts_secret() {
@@ -420,5 +421,49 @@ mod tests {
             panic!("expected PrivateKey");
         };
         assert_eq!(passphrase.unwrap().expose_secret(), "secret");
+    }
+
+    #[test]
+    fn keyboard_interactive_credentials_compare_equal() {
+        let a = Credential::keyboard_interactive(|_info| {
+            Box::pin(async { KeyboardInteractiveReply::Abort })
+        });
+        let b = Credential::keyboard_interactive(|_info| {
+            Box::pin(async { KeyboardInteractiveReply::Abort })
+        });
+        assert_eq!(a, b);
+        assert_eq!(b, a);
+    }
+
+    #[test]
+    fn different_credential_kinds_not_equal() {
+        let pw1 = Credential::password("hello");
+        let pw2 = Credential::password("hello");
+        assert_eq!(pw1, pw2);
+
+        let ki = Credential::keyboard_interactive(|_info| {
+            Box::pin(async { KeyboardInteractiveReply::Abort })
+        });
+        assert_ne!(pw1, ki);
+        assert_ne!(Credential::None, ki);
+    }
+
+    #[test]
+    fn identity_key_file_expands_tilde() {
+        let id = Identity::key_file("~/nonexistent_key");
+        let Identity::KeyFile { path, .. } = id else {
+            panic!("expected KeyFile");
+        };
+        let path_str = path.to_string_lossy();
+        assert!(!path_str.starts_with("~"), "tilde not expanded: {path_str}");
+    }
+
+    #[test]
+    fn identity_key_file_no_tilde_passes_through() {
+        let id = Identity::key_file("/absolute/path/to/key");
+        let Identity::KeyFile { path, .. } = id else {
+            panic!("expected KeyFile");
+        };
+        assert_eq!(path.to_string_lossy(), "/absolute/path/to/key");
     }
 }
