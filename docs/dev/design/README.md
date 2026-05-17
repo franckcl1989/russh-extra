@@ -28,4 +28,4 @@ to Accepted and make sure the roadmap points to it.
 - [Public Key and Agent Authentication](./public-key-auth.md) - Implemented (first runtime slice)
 - [Channels and Shells](./channels-shells.md) - Implemented (first runtime slice, split read/write halves deferred)
 - [Native SFTP Layer](./native-sftp.md) - Implemented (SFTP v3, v4+ deferred)
-- [Forwarding and Tunnels](./forwarding-tunnels.md) - Implemented (first runtime slice, StreamLocal hardening and dynamic SOCKS deferred)
+- [Forwarding and Tunnels](./forwarding-tunnels.md) - Implemented

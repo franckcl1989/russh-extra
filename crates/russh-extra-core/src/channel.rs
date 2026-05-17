@@ -22,6 +22,52 @@ pub enum ChannelKind {
     ForwardedStreamLocal,
     /// Named subsystem channel.
     Subsystem(String),
+    /// X11 forwarding channel.
+    X11,
+    /// SSH agent forwarding channel.
+    AuthAgent,
+}
+
+impl ChannelKind {
+    /// Creates a session channel kind.
+    pub fn session() -> Self {
+        Self::Session
+    }
+
+    /// Creates a direct TCP/IP channel kind.
+    pub fn direct_tcp_ip() -> Self {
+        Self::DirectTcpIp
+    }
+
+    /// Creates a forwarded TCP/IP channel kind.
+    pub fn forwarded_tcp_ip() -> Self {
+        Self::ForwardedTcpIp
+    }
+
+    /// Creates a direct streamlocal channel kind.
+    pub fn direct_stream_local() -> Self {
+        Self::DirectStreamLocal
+    }
+
+    /// Creates a forwarded streamlocal channel kind.
+    pub fn forwarded_stream_local() -> Self {
+        Self::ForwardedStreamLocal
+    }
+
+    /// Creates a subsystem channel kind.
+    pub fn subsystem(name: impl Into<String>) -> Self {
+        Self::Subsystem(name.into())
+    }
+
+    /// Creates an X11 forwarding channel kind.
+    pub fn x11() -> Self {
+        Self::X11
+    }
+
+    /// Creates an SSH agent forwarding channel kind.
+    pub fn auth_agent() -> Self {
+        Self::AuthAgent
+    }
 }
 
 /// Remote command exit information.
@@ -32,7 +78,7 @@ pub enum CommandExit {
     /// The remote process reported an exit status.
     Status(u32),
     /// The remote process was terminated by a signal.
-    Signal(String),
+    Signal(String, bool),
     /// The channel closed without an exit status or signal.
     Missing,
 }
@@ -91,8 +137,8 @@ impl CommandExit {
     }
 
     /// Creates a command exit from a signal name.
-    pub fn signal(signal: impl Into<String>) -> Self {
-        Self::Signal(signal.into())
+    pub fn signal(signal: impl Into<String>, core_dumped: bool) -> Self {
+        Self::Signal(signal.into(), core_dumped)
     }
 
     /// Creates a command exit for a channel that closed without status.
@@ -104,14 +150,14 @@ impl CommandExit {
     pub fn code(&self) -> Option<u32> {
         match self {
             Self::Status(status) => Some(*status),
-            Self::Signal(_) | Self::Missing => None,
+            Self::Signal(..) | Self::Missing => None,
         }
     }
 
     /// Returns the optional signal name.
     pub fn signal_name(&self) -> Option<&str> {
         match self {
-            Self::Signal(signal) => Some(signal),
+            Self::Signal(signal, _) => Some(signal),
             Self::Status(_) | Self::Missing => None,
         }
     }
@@ -177,6 +223,12 @@ impl Pty {
     pub fn with_pixels(mut self, width_pixels: u32, height_pixels: u32) -> Self {
         self.width_pixels = width_pixels;
         self.height_pixels = height_pixels;
+        self
+    }
+
+    /// Sets the terminal type.
+    pub fn with_term(mut self, term: impl Into<String>) -> Self {
+        self.term = term.into();
         self
     }
 
@@ -249,7 +301,7 @@ pub enum TerminalMode {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CommandLimits, DEFAULT_COMMAND_OUTPUT_LIMIT};
+    use crate::{ChannelKind, CommandExit, CommandLimits, DEFAULT_COMMAND_OUTPUT_LIMIT, Pty};
 
     #[test]
     fn command_limits_default_to_eight_mib_per_stream() {
@@ -265,5 +317,66 @@ mod tests {
 
         assert_eq!(limits.stdout(), 1024);
         assert_eq!(limits.stderr(), 2048);
+    }
+
+    #[test]
+    fn pty_with_term_sets_terminal_type() {
+        let pty = Pty::default().with_term("vt100");
+        assert_eq!(pty.term(), "vt100");
+    }
+
+    #[test]
+    fn pty_with_term_overrides_default() {
+        let pty = Pty::new("screen", 120, 40).with_term("xterm");
+        assert_eq!(pty.term(), "xterm");
+    }
+
+    #[test]
+    fn channel_kind_has_x11_and_auth_agent_variants() {
+        assert_eq!(ChannelKind::X11, ChannelKind::X11);
+        assert_eq!(ChannelKind::AuthAgent, ChannelKind::AuthAgent);
+        assert_ne!(ChannelKind::X11, ChannelKind::AuthAgent);
+        assert_ne!(ChannelKind::Session, ChannelKind::X11);
+    }
+
+    #[test]
+    fn channel_kind_constructors() {
+        assert_eq!(ChannelKind::session(), ChannelKind::Session);
+        assert_eq!(ChannelKind::direct_tcp_ip(), ChannelKind::DirectTcpIp);
+        assert_eq!(ChannelKind::forwarded_tcp_ip(), ChannelKind::ForwardedTcpIp);
+        assert_eq!(
+            ChannelKind::direct_stream_local(),
+            ChannelKind::DirectStreamLocal
+        );
+        assert_eq!(
+            ChannelKind::forwarded_stream_local(),
+            ChannelKind::ForwardedStreamLocal
+        );
+        assert_eq!(
+            ChannelKind::subsystem("sftp"),
+            ChannelKind::Subsystem("sftp".to_owned())
+        );
+        assert_eq!(ChannelKind::x11(), ChannelKind::X11);
+        assert_eq!(ChannelKind::auth_agent(), ChannelKind::AuthAgent);
+    }
+
+    #[test]
+    fn command_exit_signal_stores_core_dumped_true() {
+        let exit = CommandExit::signal("ABRT", true);
+        assert_eq!(exit.signal_name(), Some("ABRT"));
+        assert!(matches!(exit, CommandExit::Signal(_, true)));
+    }
+
+    #[test]
+    fn command_exit_signal_stores_core_dumped_false() {
+        let exit = CommandExit::signal("TERM", false);
+        assert_eq!(exit.signal_name(), Some("TERM"));
+        assert!(matches!(exit, CommandExit::Signal(_, false)));
+    }
+
+    #[test]
+    fn command_exit_code_ignores_signal_variants() {
+        assert_eq!(CommandExit::signal("KILL", false).code(), None);
+        assert_eq!(CommandExit::signal("KILL", true).code(), None);
     }
 }

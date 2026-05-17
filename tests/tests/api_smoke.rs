@@ -16,6 +16,7 @@ fn test_host_key() -> ServerHostKey {
 }
 
 #[test]
+#[allow(deprecated)]
 fn client_builder_sets_core_configuration() {
     let client = Client::builder()
         .endpoint(("example.com", 2222))

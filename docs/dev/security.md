@@ -39,8 +39,9 @@ Client designs must specify:
 - How authentication failures are classified.
 - Which fields are allowed in tracing.
 
-`strict_host_key_checking(false)` is allowed only as an explicit opt-out. It
-must be visible in code and documented as unsafe for production connections.
+`host_key_policy(HostKeyPolicy::InsecureAcceptAny)` is allowed only as an explicit
+opt-out. It must be visible in code and documented as unsafe for production
+connections.
 
 ## Server Requirements
 

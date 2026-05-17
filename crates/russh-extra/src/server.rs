@@ -1276,6 +1276,7 @@ impl ExecResponse {
 }
 
 /// Commands sent from a streaming exec handler to the session loop.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub enum StreamingExecCmd {
     /// Data for stdout.
@@ -1372,9 +1373,14 @@ impl StreamingExecContext {
     /// Sends an exit signal and signals the channel to close.
     ///
     /// After calling this method, further stdout/stderr writes will fail.
+    ///
+    /// The `core_dumped` flag is always `false` for handler-generated signals.
+    /// If you need to report a core-dump signal, use
+    /// `StreamingExecCmd::Exited(CommandExit::Signal(name, true))` through
+    /// the internal command channel directly.
     pub async fn exit_signal(&mut self, signal: String) -> Result<()> {
         self.cmd_tx
-            .send(StreamingExecCmd::Exited(CommandExit::Signal(signal)))
+            .send(StreamingExecCmd::Exited(CommandExit::Signal(signal, false)))
             .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "exec channel closed"))
     }
 }
@@ -1838,6 +1844,7 @@ impl SessionContext {
 }
 
 /// Server event exposed by high-level handlers.
+#[non_exhaustive]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ServerEvent {
     /// A client connected.
@@ -2099,12 +2106,12 @@ impl HighLevelRusshHandler {
                             CommandExit::Status(status) => {
                                 let _ = handle.exit_status_request(channel, status).await;
                             }
-                            CommandExit::Signal(signal) => {
+                            CommandExit::Signal(signal, core_dumped) => {
                                 let _ = handle
                                     .exit_signal_request(
                                         channel,
                                         russh::Sig::Custom(signal),
-                                        false,
+                                        core_dumped,
                                         "".to_owned(),
                                         "".to_owned(),
                                     )
@@ -2963,8 +2970,14 @@ fn send_exec_response(
 
     match response.exit {
         CommandExit::Status(status) => session.exit_status_request(channel, status)?,
-        CommandExit::Signal(signal) => {
-            session.exit_signal_request(channel, russh::Sig::Custom(signal), false, "", "")?;
+        CommandExit::Signal(signal, core_dumped) => {
+            session.exit_signal_request(
+                channel,
+                russh::Sig::Custom(signal),
+                core_dumped,
+                "",
+                "",
+            )?;
         }
         CommandExit::Missing => {}
         _ => {}

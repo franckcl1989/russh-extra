@@ -1,6 +1,6 @@
 # Forwarding and Tunnels
 
-Status: Implemented (first runtime slice, StreamLocal hardening pending)
+Status: Implemented
 Roadmap: `docs/dev/roadmap.md#forwarding-and-tunnels`
 
 ## Summary
@@ -12,8 +12,8 @@ StreamLocal forwarding, and direct StreamLocal channels built on official
 
 The TCP runtime has loopback coverage for direct, local, and remote forwarding.
 StreamLocal runtime support is implemented where the platform and `russh`
-support Unix-domain forwarding, and remains a `0.1.1` hardening target for
-additional loopback tests and cancellation edge cases.
+support Unix-domain forwarding, with loopback integration tests for close
+socket cleanup and abort no-panic behavior.
 
 ## Motivation
 

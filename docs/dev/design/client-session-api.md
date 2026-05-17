@@ -110,7 +110,7 @@ Shell, SFTP, subsystem, and tunnel APIs hang off the connected session:
 
 ```rust
 let shell = session.shell().build().open().await?;
-let sftp_result = session.sftp().await; // currently returns Error::Unsupported
+let sftp = session.sftp().await?;
 let tunnel = session.tunnel(russh_extra::ForwardSpec::local_tcp(
     ("127.0.0.1", 8080),
     ("10.0.0.10", 80),
@@ -160,7 +160,7 @@ returns `CommandOutput`.
 `CommandOutput.exit` uses `CommandExit`:
 
 - `CommandExit::Status(code)` when the server reports an exit status.
-- `CommandExit::Signal(name)` when the server reports signal termination.
+- `CommandExit::Signal(name, core_dumped)` when the server reports signal termination.
 - `CommandExit::Missing` when the channel closes without status or signal.
 
 Channel events for buffered commands are interpreted as:

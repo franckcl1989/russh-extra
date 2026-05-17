@@ -148,6 +148,7 @@ fn base64_decode_key(encoded: &str) -> Result<Vec<u8>, ()> {
 }
 
 /// Status returned by a known-hosts lookup.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KnownHostStatus {
     /// The host key matched a known entry.

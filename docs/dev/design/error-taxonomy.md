@@ -119,8 +119,9 @@ The accepted kind enums are:
   `UnsupportedMethod`, `Unavailable`.
 - `ChannelErrorKind`: `Open`, `Request`, `Read`, `Write`, `Eof`, `Close`,
   `Protocol`.
-- `SftpErrorKind`: `Status`, `MalformedPacket`, `UnsupportedVersion`,
-  `UnsupportedExtension`, `RequestIdMismatch`, `LocalIo`, `RemoteDisconnect`.
+- `SftpErrorKind`: `RemoteStatus`, `Protocol`, `UnsupportedVersion`,
+  `Unsupported`, `UnexpectedResponse`, `ChannelIo`, `NoSuchFile`,
+  `PermissionDenied`.
 - `ForwardingErrorKind`: `Bind`, `Listen`, `Accept`, `Connect`,
   `GlobalRequest`, `ChannelOpen`, `StreamCopy`, `Cancel`, `Shutdown`.
 - `Operation`: `Connect`, `Authentication`, `ChannelOpen`, `Command`, `Shell`,

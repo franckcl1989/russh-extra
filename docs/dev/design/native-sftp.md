@@ -244,7 +244,7 @@ dir.close().await?;
 ### Symlink operations
 
 ```rust
-sftp.symlink("/var/log/app.log", "/tmp/app-link").await?;
+sftp.symlink("/tmp/app-link", "/var/log/app.log").await?;
 let target = sftp.readlink("/tmp/app-link").await?;
 let resolved = sftp.canonicalize("/tmp/app-link").await?; // realpath
 ```

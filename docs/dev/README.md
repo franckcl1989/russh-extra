@@ -13,6 +13,8 @@ architecture, and roadmap docs.
 - [Testing Strategy](./testing.md)
 - [Development Plan](./development-plan.md)
 - [0.1.1 Development Plan](./0.1.1-development-plan.md)
+- [0.1.2 Development Plan](./0.1.2-development-plan.md)
+- [0.1.3 Development Plan](./0.1.3-development-plan.md)
 - [Security Policy](./security.md)
 - [Release and Compatibility Policy](./release.md)
 

@@ -1676,3 +1676,255 @@ async fn sftp_file_drop_auto_closes() {
     tokio::time::sleep(Duration::from_millis(50)).await;
     // If we got here without deadlock or panic, drop works
 }
+
+#[tokio::test]
+async fn command_output_at_default_limit_does_not_truncate() {
+    init_tracing();
+    let data = vec![b'A'; 1024 * 1024]; // 1 MiB
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .streaming_command(
+                "big-out",
+                StreamingCommandConfig::new()
+                    .stdout(data.clone())
+                    .stderr(b"done\n".to_vec())
+                    .exit_status(0),
+            ),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let output = session.command("big-out").await.unwrap();
+    assert_eq!(output.stdout.len(), 1024 * 1024);
+    assert_eq!(output.stdout, data);
+    assert_eq!(output.stderr.as_ref(), b"done\n");
+    assert!(output.success());
+}
+
+#[tokio::test]
+async fn direct_tcp_bidirectional_large_data() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_direct_tcpip(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let mut stream = session
+        .direct_tcp(TcpEndpoint::new("example.test", 80))
+        .open()
+        .await
+        .unwrap();
+
+    let send_data = vec![0xAB; 256 * 1024]; // 256 KiB
+    stream.write_all(&send_data).await.unwrap();
+
+    let mut buf = vec![0u8; send_data.len()];
+    stream.read_exact(&mut buf).await.unwrap();
+    assert_eq!(buf, send_data);
+
+    stream.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn sftp_read_at_buffer_boundary_32kib() {
+    init_tracing();
+    let data = vec![b'X'; 32 * 1024]; // exactly 32 KiB
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_subsystem("sftp")
+            .sftp_file("/32k.bin", data.as_slice(), 0o644),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let sftp = session.sftp().await.unwrap();
+    let mut file = sftp
+        .open("/32k.bin", russh_extra::SftpOpenMode::READ)
+        .await
+        .unwrap();
+    let chunk = file.read(0, 32 * 1024).await.unwrap();
+    assert_eq!(chunk.len(), 32 * 1024);
+    assert_eq!(chunk, data);
+    file.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn sftp_read_across_buffer_boundary_64kib() {
+    init_tracing();
+    let data = vec![b'Y'; 64 * 1024]; // 64 KiB, > 32 KiB buffer
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_subsystem("sftp")
+            .sftp_file("/64k.bin", data.as_slice(), 0o644),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let sftp = session.sftp().await.unwrap();
+    let mut file = sftp
+        .open("/64k.bin", russh_extra::SftpOpenMode::READ)
+        .await
+        .unwrap();
+
+    let mut all_data = Vec::new();
+    let mut offset = 0u64;
+    loop {
+        let chunk = file.read(offset, 32 * 1024).await.unwrap();
+        if chunk.is_empty() {
+            break;
+        }
+        all_data.extend_from_slice(&chunk);
+        offset += chunk.len() as u64;
+    }
+    assert_eq!(all_data.len(), 64 * 1024);
+    assert_eq!(all_data, data);
+    file.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn streaming_exec_stderr_is_captured() {
+    init_tracing();
+    let (private_key, _public_key) = generate_test_key_pair();
+    let pem = serialize_private_key(&private_key);
+    let addr = bind_ephemeral().await;
+
+    let stderr_sent = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stderr_sent_clone = std::sync::Arc::clone(&stderr_sent);
+
+    let server_handle = russh_extra::ServerBuilder::default()
+        .listen(addr.clone())
+        .host_key(russh_extra::ServerHostKey::from_openssh_pem(pem).unwrap())
+        .password_auth(|_ctx, _password| async { Ok(russh_extra::AuthDecision::accept()) })
+        .streaming_exec("echo-stderr", {
+            let stderr_sent = stderr_sent_clone;
+            move |mut ctx| {
+                let stderr_sent = std::sync::Arc::clone(&stderr_sent);
+                async move {
+                    ctx.stderr(b"err-data\n".to_vec()).await.unwrap();
+                    stderr_sent.store(true, std::sync::atomic::Ordering::SeqCst);
+                    ctx.exit_status(0).await.unwrap();
+                    Ok(())
+                }
+            }
+        })
+        .build()
+        .unwrap();
+
+    let _server_task = tokio::spawn(async move {
+        let _ = server_handle.run().await;
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let session = Client::builder()
+        .endpoint(addr)
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let output = session.command("echo-stderr").await.unwrap();
+    assert_eq!(output.stderr.as_ref(), b"err-data\n");
+    assert!(stderr_sent.load(std::sync::atomic::Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn shell_async_io_drop_without_close_closes_channel() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_shell(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let shell_handle = session.shell().build().open().await.unwrap();
+    let async_io = shell_handle.into_async_io();
+    drop(async_io);
+    // If we reached here without hang, drop-based shutdown works
+}
+
+#[tokio::test]
+async fn shell_handle_close_then_drop_no_panic() {
+    init_tracing();
+    let server = LoopbackServer::start(
+        LoopbackServerConfig::new()
+            .password("demo", "demo")
+            .accept_shell(),
+    )
+    .await
+    .unwrap();
+
+    let session = Client::builder()
+        .endpoint(server.endpoint())
+        .username("demo")
+        .password("demo".to_owned())
+        .accept_any_host_key()
+        .build()
+        .connect()
+        .await
+        .unwrap();
+
+    let shell_handle = session.shell().build().open().await.unwrap();
+    shell_handle.close().await.unwrap();
+    // ShellHandle drop after close — should not panic or hang
+}

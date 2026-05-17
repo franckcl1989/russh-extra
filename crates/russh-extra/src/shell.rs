@@ -87,7 +87,7 @@ impl X11Params {
 
         Self {
             single_connection: false,
-            protocol: "MIT-MAGIC-COOKIE-1".to_owned(),
+            protocol: "MIT-MAGIC-COOKIE-1".into(),
             cookie,
             screen,
         }
@@ -193,8 +193,15 @@ impl ShellHandle {
                 }) => {
                     self.exit = CommandExit::Status(status);
                 }
-                Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
-                    self.exit = CommandExit::Signal(crate::client::signal_to_name(signal_name));
+                Some(ChannelMsg::ExitSignal {
+                    signal_name,
+                    core_dumped,
+                    ..
+                }) => {
+                    self.exit = CommandExit::Signal(
+                        crate::client::signal_to_name(signal_name),
+                        core_dumped,
+                    );
                 }
                 Some(ChannelMsg::Close) | None => {
                     self.closed = true;
@@ -912,9 +919,10 @@ async fn run_channel_bridge(
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
                         *exit.lock().await = CommandExit::Status(exit_status);
                     }
-                    Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                    Some(ChannelMsg::ExitSignal { signal_name, core_dumped, .. }) => {
                         *exit.lock().await = CommandExit::Signal(
                             crate::client::signal_to_name(signal_name),
+                            core_dumped,
                         );
                     }
                     Some(ChannelMsg::Close) | None => {

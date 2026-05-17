@@ -18,12 +18,13 @@ local layers over public `russh` APIs.
 
 ## Current Focus
 
-1. `0.1.1` hardening release is complete (see
-   [0.1.1 Development Plan](0.1.1-development-plan.md) and
-   [audit note](audits/2026-05-15-release-0.1.1.md)).
-2. Prepare `0.2` planning: hashed known-hosts matching, wildcard matching,
+1. `0.1.2` hardening release is complete (see
+   [0.1.2 Development Plan](0.1.2-development-plan.md)).
+2. `0.1.3` hardening release complete: test coverage expansion (263 tests),
+   small API completions, documentation drift fixes, dependency update.
+3. Prepare `0.2` planning: hashed known-hosts matching, wildcard matching,
    dynamic SOCKS forwarding, SFTP v4+ extensions, split read/write halves.
-3. Keep deferred features tracked in the roadmap sections below.
+4. Keep deferred features tracked in the roadmap sections below.
 
 ## Foundation
 
@@ -161,7 +162,7 @@ Design: [Native SFTP Layer](design/native-sftp.md)
 
 ## Forwarding and Tunnels
 
-Status: Implemented (first runtime slice, StreamLocal hardening pending)
+Status: Implemented (first runtime slice)
 Design: [Forwarding and Tunnels](design/forwarding-tunnels.md)
 
 - Implemented: `TunnelBuilder` from `Session::tunnel()` for local and remote TCP forwarding.

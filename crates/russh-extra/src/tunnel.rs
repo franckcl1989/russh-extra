@@ -25,14 +25,16 @@ use super::client::ClientHandler;
 
 /// Shared registry of remote TCP forwarding targets.
 ///
-/// Keyed by remote bind port. Written by [`Tunnel::start`] for remote
-/// forwarding specs and read by [`ClientHandler::server_channel_open_forwarded_tcpip`].
+/// Keyed by remote bind port. Written when a remote TCP forwarding
+/// tunnel starts and read by the client handler's
+/// `server_channel_open_forwarded_tcpip` callback.
 pub(crate) type RemoteForwardMap = Arc<Mutex<HashMap<u16, TcpEndpoint>>>;
 
 /// Shared registry of remote streamlocal forwarding targets.
 ///
-/// Keyed by remote bind socket path. Written by streamlocal forwarding
-/// and read by [`ClientHandler::server_channel_open_forwarded_streamlocal`].
+/// Keyed by remote bind socket path. Written when a remote streamlocal
+/// forwarding tunnel starts and read by the client handler's
+/// `server_channel_open_forwarded_streamlocal` callback.
 pub(crate) type RemoteStreamLocalForwardMap = Arc<Mutex<HashMap<String, PathBuf>>>;
 
 // ── TunnelBuilder ─────────────────────────────────────────────────────

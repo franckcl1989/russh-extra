@@ -197,8 +197,7 @@ let mut async_io = session
     .build()
     .open()
     .await?
-    .into_async_io()
-    .await?;
+    .into_async_io();
 
 tokio::io::copy(&mut async_io, &mut tokio::io::stdout()).await?;
 ```
@@ -334,16 +333,17 @@ println!("size: {:?}", metadata.size());
 
 let mut dir = sftp.opendir("/tmp").await?;
 while let Some(entry) = sftp.readdir(&mut dir).await? {
-    println!("{}", entry.name());
+    println!("{}", entry.filename());
 }
 dir.close().await?;
 
 let contents = sftp.read_to_vec("/etc/hostname").await?;
 ```
 
-The SFTP client supports open, read, write, close, stat, lstat, fstat,
-setstat, fsetstat, opendir, readdir, remove, rename, mkdir, rmdir, realpath,
-readlink, and symlink operations. File and directory handles auto-close on drop.
+The SFTP client supports open, read, write, close_file, metadata,
+symlink_metadata, set_stat, fset_stat, opendir, readdir, remove, rename,
+create_dir, remove_dir, canonicalize, readlink, symlink, read_to_vec,
+and write_all operations. File and directory handles auto-close on drop.
 
 Server-side SFTP is available via the `SftpServerHandler` trait when both
 `server` and `sftp` features are enabled:
@@ -393,6 +393,8 @@ cargo check -p russh-extra --no-default-features --features sftp,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features shell,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features tunnel,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features client,ring
+cargo check -p russh-extra --no-default-features --features server,sftp,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features full
 ```
 
 ## Error Handling
@@ -460,7 +462,7 @@ Implemented in the 0.1 line:
 - Explicit `Session::disconnect()` for graceful client-side connection teardown.
 - Server listener, password auth, public-key auth, keyboard-interactive auth, exact command routing, streaming exec, env propagation, lifecycle hooks, and graceful shutdown.
 - Interactive shell, PTY allocation, resize, signal, X11 forwarding, agent forwarding, and subsystem channel opening.
-- Native SFTP v3 client: open, read, write, close, stat, lstat, opendir, readdir, remove, rename, mkdir, rmdir, realpath, readlink, symlink.
+- Native SFTP v3 client: open, read, write, close_file, metadata, symlink_metadata, opendir, readdir, remove, rename, create_dir, remove_dir, canonicalize, readlink, symlink, read_to_vec, write_all.
 - Direct TCP channels, local TCP forwarding, remote TCP forwarding, and StreamLocal (Unix-domain) forwarding.
 - OpenSSH certificate authentication (certificate + private key pairs).
 - Authentication banner display and server-side banner configuration.
@@ -538,7 +540,7 @@ Or run commands directly:
 ```bash
 cargo fmt --all --check
 cargo check --workspace --all-targets --all-features
-cargo clippy --workspace --all-features -- -D warnings
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo doc --workspace --all-features --no-deps
 ```

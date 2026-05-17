@@ -10,22 +10,38 @@ license.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+categories.workspace = true
 
 [features]
+## The default set of features enabled when this crate is a dependency.
 default = ["client", "known-hosts", "aws-lc-rs"]
+## Internal gate for russh dependency.
 _russh = ["dep:russh"]
+## SSH agent authentication via `$SSH_AUTH_SOCK`.
 agent = ["client"]
+## AWS-LC RSA and Ed25519 cryptography (default backend).
 aws-lc-rs = ["_russh", "russh/aws-lc-rs"]
+## Async SSH client runtime.
 client = ["_russh"]
+## Compression support via flate2.
 flate2 = ["_russh", "russh/flate2"]
+## Known-hosts file parsing and host-key verification.
 known-hosts = ["_russh"]
+## Ring cryptography backend (mutually exclusive with aws-lc-rs).
 ring = ["_russh", "russh/ring"]
+## RSA key support.
 rsa = ["_russh", "russh/rsa"]
+## Serde serialization for configuration types.
 serde = ["russh-extra-core/serde"]
+## Async SSH server runtime.
 server = ["_russh"]
+## SFTP v3 client and server (requires async-trait for server).
 sftp = ["client", "dep:async-trait"]
+## Interactive shell and PTY allocation.
 shell = ["client"]
+## TCP and StreamLocal port forwarding.
 tunnel = ["client", "server"]
+## All stable runtime features.
 full = ["client", "server", "shell", "tunnel", "known-hosts", "agent", "sftp", "aws-lc-rs", "flate2", "rsa"]
 
 [dependencies]

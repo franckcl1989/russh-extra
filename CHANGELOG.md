@@ -7,49 +7,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
-## [0.1.1] - 2026-05-15
+## [0.1.3] - 2026-05-17
 
 ### Added
 
-- `SftpErrorKind::NoSuchFile` and `SftpErrorKind::PermissionDenied` variants for
-  finer-grained SFTP error classification.
-- Server-side SFTP error-to-status-code mapping: handler errors with typed
-  `SftpErrorKind` values now produce the corresponding SFTP v3 status codes
-  (`SSH_FX_NO_SUCH_FILE`, `SSH_FX_PERMISSION_DENIED`, `SSH_FX_OP_UNSUPPORTED`,
-  `SSH_FX_BAD_MESSAGE`, `SSH_FX_FAILURE`).
-- Client-side SFTP status-code-to-error-kind mapping: specific SSH_FX codes
-  received from the server now produce typed `SftpErrorKind` variants.
-- `sftp_error_kind_for_code()` helper in `packet.rs` for shared client/server
-  SFTP status-to-kind mapping.
-- Unix-only integration tests for StreamLocal tunnel close (socket path cleanup)
-  and tunnel abort (no panic).
-- Known-hosts edge-case tests: wildcard-looking entries do not match unrelated
-  hosts, hashed entries are skipped with warnings, malformed lines mixed with
-  valid entries are collected as warnings.
-- Known-hosts `set_hash_hostnames()` regression test confirming plain-text
-  hostname output (hashed writing not yet implemented).
-
-### Changed
-
-- Documentation governance: `docs/dev/design/README.md`, `docs/dev/roadmap.md`,
-  and `docs/dev/development-plan.md` statuses reconciled with the post-0.1.0
-  implementation state. All top-level sections now show accurate status labels.
-- `AGENTS.md` updated: test count (205 → 212), edition reference (2021 → 2024),
-  and version roadmap status.
-- Roadmap Foundation, Client, Server, Known Hosts, and Testing sections marked
-  as Implemented.
-- `InMemorySftpHandler` test handler now uses `SftpErrorKind::NoSuchFile`
-  instead of a generic `Unsupported` error when a file is not found.
+- `CommandExit::Signal` now carries a `core_dumped: bool` field alongside the
+  signal name.
+- `ChannelKind` now has `X11` and `AuthAgent` variants for X11 forwarding and
+  agent forwarding channels. All 8 `ChannelKind` variants now have public
+  constructor methods (`session()`, `direct_tcp_ip()`, `x11()`, etc.).
+- `TcpEndpoint` and `StreamLocalSpec` now implement `Display` and `FromStr`,
+  with IPv6 bracket notation support and tilde expansion.
+- `Pty::with_term()` setter for changing the terminal type after construction.
+- `StreamLocalSpec` expands tilde in paths automatically through `new()`.
 
 ### Fixed
 
-- Local StreamLocal forwarding now removes the Unix-domain socket file after
-  `Tunnel::close()` (previously the socket file was left behind on listener
-  shutdown).
-- SFTP server runtime maps typed handler errors to stable SFTP v3 status codes
-  instead of collapsing all failures to `SSH_FX_FAILURE`.
+- SFTP server `readdir` no longer hangs on handler that returns entries but
+  never sends EOF. The `SftpServerHandler::readdir` trait method now has the
+  correct contract: returning an empty `Vec` signals end-of-directory.
+  Previously the `InMemorySftpHandler` in integration tests returned all
+  entries on every call, causing an infinite loop in the client.
+- Previously-ignored `sftp_server_readdir_and_fstat` integration test is now
+  active and passing.
+- `InMemorySftpHandler::stat()` now returns `SftpErrorKind::NoSuchFile` for
+  missing files (previously returned a generic `Unsupported` error), matching
+  the `open()` handler's behavior.
+- `README.md` code example: `.into_async_io().await?` corrected to
+  `.into_async_io()` (the method is synchronous).
+- `README.md` code example: `entry.name()` corrected to `entry.filename()`.
+- `docs/dev/design/error-taxonomy.md`: `SftpErrorKind` variant names updated
+  to match the actual implementation (`RemoteStatus`, `Protocol`, `ChannelIo`,
+  `UnexpectedResponse`; added `NoSuchFile` and `PermissionDenied`).
+- `docs/dev/design/native-sftp.md`: `symlink()` example argument order fixed
+  (`linkpath` first, then `targetpath`).
+- `docs/dev/design/forwarding-tunnels.md`: removed stale "StreamLocal hardening
+  pending" status label.
+- `docs/dev/security.md`: deprecated `strict_host_key_checking(false)` replaced
+  with `host_key_policy(HostKeyPolicy::InsecureAcceptAny)`.
+- `docs/dev/design/client-session-api.md`: stale SFTP `Error::Unsupported` claim
+  removed; `CommandExit::Signal` signature updated to 2-arg form.
+- `AGENTS.md` §15 SFTP known limitations: `readdir` batching claim corrected
+  (batching IS implemented via `readdir_batch()`).
+- `AGENTS.md` §11 `CommandOutput` illustrative types corrected (`Vec<u8>` →
+  `Bytes`; removed non-existent `stdout_string_lossy`).
+- `AGENTS.md` §15 SFTP method names corrected to match actual public API
+  (`set_stat`, `create_dir`, `close_file`, `canonicalize`, etc.).
+- `AGENTS.md` §13 `HostKeyPolicy` variant list corrected to actual enum
+  (`Strict`, `InsecureAcceptAny`, `PinnedSha256`; `AcceptNew` removed).
+- `AGENTS.md` §22 example file list updated to match actual 14 examples.
+- Fixed documentation drift: CHANGELOG section ordering, stale version
+  references, status labels, broken intra-doc links, and missing audit/dev-plan
+  links across 13 files.
+- `CONTRIBUTING.md`: added `server,sftp` and `full` feature-gate checks, added
+  `cargo check --workspace --all-targets`, added `--all-targets` to clippy.
+- `README.md`: added `server,sftp` and `full` feature-gate checks.
 
-## [0.1.2] - UNRELEASED
+### Changed
+
+- `russh` dependency updated from 0.60.2 to 0.60.3.
+- `ClientBuilder::strict_host_key_checking()` is now deprecated in favor of
+  `host_key_policy()` (matching the already-deprecated
+  `ClientConfig::set_strict_host_key_checking()`).
+- `ServerEvent`, `StreamingExecCmd`, and `KnownHostStatus` are now marked
+  `#[non_exhaustive]` for future extensibility.
+- `categories.workspace = true` added to both publishable crate manifests
+  for correct crates.io category listing.
+- `##` doc comments added to all 16 feature flags across both Cargo.toml files.
+- CI `cargo check` and `cargo clippy` now include `--all-targets` (examples
+  are compiled in CI for the first time).
+
+### Internal
+
+- Added `SftpServerHandler` test implementations for `setstat`, `fsetstat`,
+  `realpath`, `symlink`, and `readlink` in the integration test
+  `InMemorySftpHandler`.
+- Added 12 integration tests: large data transfers (4), ShellAsyncIo lifecycle
+  (2), SFTP handler methods — symlink, readlink, realpath, setstat, fsetstat,
+  readdir exhaustion, metadata builders (6).
+- Added 21 unit tests for `Pty::with_term`, `ChannelKind`, `CommandExit::Signal`,
+  `TcpEndpoint::Display/FromStr`, `StreamLocalSpec::Display/FromStr`.
+- `InMemorySftpHandler::readdir` made stateful (cursor-based) to fix the
+  previously-ignored `sftp_server_readdir_and_fstat` test.
+- `sftp_server_stat_missing_file_returns_error` test strengthened to validate
+  `SftpErrorKind::NoSuchFile`.
+- Misleading test names corrected: `*debug_redacts_secrets` → `*_invalid_*`,
+  `*shell_async_io_*` → appropriate names matching tested behavior.
+- `certificate_credential_rejects_invalid_key_format` test rebuilt (old test
+  had a mismatched name that implied debug testing it didn't perform).
+- `SftpOpenMode` constants now have `///` doc comments.
+- `.to_owned()` replaced with `.into()` in `shell.rs:90` and
+  `client.rs:1605-1608`.
+- Fixed documentation drift across AGENTS.md, roadmap.md, development-plan.md,
+  CHANGELOG.md, README.md, and 9 design/docs files to reflect actual 0.1.2
+  and 0.1.3 implementation state.
+- Added 0.1.2 audit note (`docs/dev/audits/2026-05-17-release-0.1.2.md`).
+- Added 0.1.3 audit note (`docs/dev/audits/2026-05-17-release-0.1.3.md`).
+- Updated 0.1.2 development plan completion tracker.
+
+## [0.1.2] - 2026-05-17
 
 ### Fixed
 
@@ -109,7 +165,49 @@ changes may occur without a new major version.
   unit tests.
 - Added SFTP server handler methods (`mkdir`, `rmdir`, `rename`, `readdir`,
   `fstat`) to the integration test `InMemorySftpHandler` with corresponding
-  integration tests (6 tests, 5 passing, 1 gated behind `#[ignore]`).
+   integration tests (6 tests, 5 passing, 1 gated behind `#[ignore]`).
+
+## [0.1.1] - 2026-05-15
+
+### Added
+
+- `SftpErrorKind::NoSuchFile` and `SftpErrorKind::PermissionDenied` variants for
+  finer-grained SFTP error classification.
+- Server-side SFTP error-to-status-code mapping: handler errors with typed
+  `SftpErrorKind` values now produce the corresponding SFTP v3 status codes
+  (`SSH_FX_NO_SUCH_FILE`, `SSH_FX_PERMISSION_DENIED`, `SSH_FX_OP_UNSUPPORTED`,
+  `SSH_FX_BAD_MESSAGE`, `SSH_FX_FAILURE`).
+- Client-side SFTP status-code-to-error-kind mapping: specific SSH_FX codes
+  received from the server now produce typed `SftpErrorKind` variants.
+- `sftp_error_kind_for_code()` helper in `packet.rs` for shared client/server
+  SFTP status-to-kind mapping.
+- Unix-only integration tests for StreamLocal tunnel close (socket path cleanup)
+  and tunnel abort (no panic).
+- Known-hosts edge-case tests: wildcard-looking entries do not match unrelated
+  hosts, hashed entries are skipped with warnings, malformed lines mixed with
+  valid entries are collected as warnings.
+- Known-hosts `set_hash_hostnames()` regression test confirming plain-text
+  hostname output (hashed writing not yet implemented).
+
+### Changed
+
+- Documentation governance: `docs/dev/design/README.md`, `docs/dev/roadmap.md`,
+  and `docs/dev/development-plan.md` statuses reconciled with the post-0.1.0
+  implementation state. All top-level sections now show accurate status labels.
+- `AGENTS.md` updated: test count (205 → 212), edition reference (2021 → 2024),
+  and version roadmap status.
+- Roadmap Foundation, Client, Server, Known Hosts, and Testing sections marked
+  as Implemented.
+- `InMemorySftpHandler` test handler now uses `SftpErrorKind::NoSuchFile`
+  instead of a generic `Unsupported` error when a file is not found.
+
+### Fixed
+
+- Local StreamLocal forwarding now removes the Unix-domain socket file after
+  `Tunnel::close()` (previously the socket file was left behind on listener
+  shutdown).
+- SFTP server runtime maps typed handler errors to stable SFTP v3 status codes
+  instead of collapsing all failures to `SSH_FX_FAILURE`.
 
 ## [0.1.0] - 2026-05-09
 
@@ -325,3 +423,5 @@ changes may occur without a new major version.
   `ServerBuilder::banner()`.
 
 [0.1.0]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.0
+[0.1.1]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.1
+[0.1.2]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.2

@@ -55,8 +55,9 @@ just check-all  # recommended: runs the full suite
 Or run commands individually:
 
 ```bash
-cargo fmt --all
-cargo clippy --workspace --all-features -- -D warnings
+cargo check --workspace --all-targets --all-features
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 cargo check -p russh-extra --no-default-features
 cargo check -p russh-extra --no-default-features --features client,aws-lc-rs
@@ -65,7 +66,9 @@ cargo check -p russh-extra --no-default-features --features known-hosts,aws-lc-r
 cargo check -p russh-extra --no-default-features --features shell,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features tunnel,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features sftp,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features server,sftp,aws-lc-rs
 cargo check -p russh-extra --no-default-features --features client,ring
+cargo check -p russh-extra --no-default-features --features full
 cargo doc --workspace --all-features --no-deps
 ```
 

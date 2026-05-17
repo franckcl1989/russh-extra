@@ -149,7 +149,7 @@ tokio::io::AsyncReadExt::read_to_end(&mut io, &mut out).await?;
 
 ### Async I/O wrapper
 
-1. User calls `ShellHandle::into_async_io().await`.
+1. User calls `ShellHandle::into_async_io()`.
 2. The handle spawns a bridge task that owns the underlying `russh` channel.
 3. The bridge task forwards channel data to `ShellAsyncIo` reads.
 4. `AsyncWrite` calls send write commands to the bridge task.

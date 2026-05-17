@@ -336,7 +336,7 @@ ring = ["_russh", "russh/ring"]
 rsa = ["_russh", "russh/rsa"]
 serde = ["russh-extra-core/serde"]
 server = ["_russh"]
-sftp = ["client"]
+sftp = ["client", "dep:async-trait"]
 shell = ["client"]
 tunnel = ["client", "server"]
 full = [
@@ -349,6 +349,7 @@ full = [
   "aws-lc-rs",
   "flate2",
   "rsa",
+  "sftp",
 ]
 ```
 
@@ -380,9 +381,10 @@ The client API should eventually support:
 - Multiple authentication methods attempted in a predictable order
 - Host key verification
 - `known_hosts` support
-- Strict host key policy
-- Accept-new host key policy
-- Explicit insecure accept-any host key policy
+    - Strict host key policy
+    - Pinned SHA256 host key fingerprints
+    - Explicit insecure accept-any host key policy
+    - Trust-on-first-use via `known_hosts_accept_new()` builder method
 - Remote command execution
 - Separate stdout and stderr collection
 - Exit status and exit signal handling
@@ -469,15 +471,13 @@ implementing.
 /// Illustrative reference — check `russh-extra-core` for the actual type.
 #[non_exhaustive]
 pub struct CommandOutput {
-    pub stdout: Vec<u8>,
-    pub stderr: Vec<u8>,
+    pub stdout: bytes::Bytes,
+    pub stderr: bytes::Bytes,
     pub exit: CommandExit,
 }
 
 impl CommandOutput {
     pub fn success(&self) -> bool;
-    pub fn stdout_string_lossy(&self) -> String;
-    pub fn stderr_string_lossy(&self) -> String;
     pub fn check_success(self) -> Result<Self>;
 }
 ```
@@ -532,16 +532,21 @@ Recommended public policy type:
 #[non_exhaustive]
 pub enum HostKeyPolicy {
     Strict,
-    AcceptNew,
     InsecureAcceptAny,
+    PinnedSha256(Vec<HostKeyFingerprint>),
 }
 ```
 
 Expected behavior:
 
 - `Strict`: fail if the host is unknown or the key does not match.
-- `AcceptNew`: accept an unknown host key and optionally persist it; fail if a known host key changed.
 - `InsecureAcceptAny`: accept any host key, only when explicitly requested.
+- `PinnedSha256(fingerprints)`: accept the host key only when its SHA256
+  fingerprint matches one of the pinned fingerprints.
+
+Trust-on-first-use (accept a new host key and optionally persist it) is
+provided by `ClientBuilder::known_hosts_accept_new()`, not by a separate
+`HostKeyPolicy` variant.
 
 Requirements:
 
@@ -603,11 +608,12 @@ with no forbidden high-level SSHeep/SFTP dependencies.
 ### Client (`features = ["sftp"]`)
 
 - `SftpClient` is obtained from `Session::sftp()` after connect.
-- Supports: `open`, `create`, `readdir`, `read`, `write`, `remove`, `metadata`,
-  `symlink_metadata`, `setstat`, `fsetstat`, `mkdir`, `rmdir`, `rename`,
-  `symlink`, `readlink`, `canonicalize`, `close`, `realpath`.
+- Supports: `open`, `readdir`, `read`, `write`, `remove`, `metadata`,
+  `symlink_metadata`, `set_stat`, `fset_stat`, `create_dir`, `remove_dir`,
+  `rename`, `close_file`, `closedir`, `symlink`, `readlink`, `canonicalize`,
+  `read_to_vec`, `write_all`.
 - `SftpFile` provides positioned `read`/`write`/`close` plus `metadata`/`set_metadata`.
-- `SftpDir` provides streaming `readdir` via `SftpDirEntry` and `close`.
+- `SftpDir` provides streaming `readdir` via `SftpDirEntry` and a `close` method.
 - `handle` and `id` allocation is automatic.
 
 ### Server (`features = ["sftp", "server"]`)
@@ -629,10 +635,11 @@ with no forbidden high-level SSHeep/SFTP dependencies.
 - No SFTP v4+ (attribute extensions, new packet types).
 - No streaming write byte-range insertion; writes replace or append.
 - `lock`/`unlock`/`statvfs`/`posix-rename` extensions are not implemented.
-- `readdir` returns a single entry per packet (no batched SSH_FXP_NAME entries).
+- `readdir` returns batched entries via `readdir_batch()` (multiple
+  `SSH_FXP_NAME` entries per response) drained by `SftpDir::read()`.
 - Read buffer size is fixed at 32 KiB per `read()` call.
-- Server `SftpMetadata` fields are private; builder methods cover the common case.
-  A full public constructor will be added post-v0.1.0.
+- Server `SftpMetadata` fields are private; builder methods and the public
+  constructor (`SftpMetadata::new()`, added in 0.1.2) cover construction needs.
 
 ---
 
@@ -903,23 +910,25 @@ Do not document planned functionality as if it is complete.
 
 ## 22. Examples
 
-Maintain practical examples in the `examples/` directory.
+Maintain practical examples in the `crates/russh-extra/examples/` directory.
 
-Recommended examples:
+Actual examples (14):
 
 ```text
-examples/
+crates/russh-extra/examples/
   client_exec.rs
   client_exec_password.rs
-  client_exec_private_key.rs
+  client_private_key.rs
   client_shell.rs
-  client_pty.rs
+  client_subsystem.rs
+  client_sftp.rs
   client_known_hosts.rs
   local_forward.rs
   remote_forward.rs
   server_password.rs
   server_public_key.rs
   server_exec.rs
+  server_streaming_exec.rs
   tracing.rs
 ```
 
@@ -1029,7 +1038,7 @@ Recommended `Cargo.toml` metadata:
 ```toml
 [package]
 name = "..."
-version = "0.1.1"
+version = "0.1.3"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A high-level async SSH API built directly on top of russh"
@@ -1051,10 +1060,11 @@ Current status (May 2026): All milestones 0–8 are complete. The crate supports
 client, server, auth, known_hosts, command execution, shell, PTY, subsystems,
 X11 forwarding, agent forwarding tunnel, OpenSSH certificate authentication,
 auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
-(client + server handler). 212 tests pass. Released as 0.1.0 on crates.io.
-0.1.1 hardening release complete, pending publish.
-0.1.2 hardening release: bug fixes, security hardening, API contract fixes.
-229 tests pass, 0 failures.
+(client + server handler). Released as 0.1.0 on crates.io.
+0.1.1 hardening release published 2026-05-15 (212 tests).
+0.1.2 hardening release published 2026-05-17 (229 tests, 0 failures).
+0.1.3 release ready: test hardening (263 tests), API completions, documentation drift fixes.
+263 tests pass, 0 failures.
 
 Suggested roadmap:
 
@@ -1088,7 +1098,7 @@ All initial milestones (0–8) are complete as of May 2026.
 - `Endpoint` (host:port+user, parser) ✓
 - `ClientConfig` / `ServerConfig` ✓
 - `Client::builder()` / `Server::builder()` ✓
-- `HostKeyPolicy` (Strict, AcceptNew, InsecureAcceptAny) ✓
+- `HostKeyPolicy` (Strict, InsecureAcceptAny, PinnedSha256) ✓
 - `AuthMethod` (password, private-key, agent) ✓
 - Unit tests for pure logic ✓
 
@@ -1185,8 +1195,25 @@ Also run when appropriate:
 
 ```bash
 cargo test
+cargo test --all-features
 cargo check --no-default-features
+cargo check --no-default-features --features full
 cargo package
+```
+
+Feature-gate verification commands (matching CI):
+
+```bash
+cargo check -p russh-extra --no-default-features
+cargo check -p russh-extra --no-default-features --features client,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features server,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features known-hosts,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features shell,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features tunnel,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features sftp,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features server,sftp,aws-lc-rs
+cargo check -p russh-extra --no-default-features --features client,ring
+cargo check -p russh-extra --no-default-features --features full
 ```
 
 If any command fails:

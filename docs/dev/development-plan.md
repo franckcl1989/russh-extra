@@ -5,15 +5,16 @@ runtime implementation.
 
 ## Current Verdict
 
-The repository has completed the first client and server runtime slices.
-`Client::connect()`, buffered `Session::command()`, known-hosts integration,
-public-key authentication, keyboard-interactive authentication, shell and
-subsystem channels, streaming server exec, and the first TCP forwarding runtime
-are present as public pre-1.0 APIs.
+The repository has completed the 0.1.0 release (first client and server runtime
+slices), the 0.1.1 hardening release (documentation governance, SFTP error
+mapping, StreamLocal lifecycle hardening, known-hosts edge cases), the 0.1.2
+hardening release (security fixes, data-loss bugs, API contract fixes, small
+missing features, debug redaction tests), and the 0.1.3 hardening release (test
+hardening, API completions, documentation drift fixes, dependency update).
 
-The next gate is hardening: keep docs, examples, tests, and feature-gating
-checks aligned with the actual behavior, and avoid expanding unfinished APIs
-before the relevant design is accepted.
+The next gate is `0.2`: deferred features including hashed and wildcard
+known-hosts matching, dynamic SOCKS forwarding, SFTP v4+ extensions, and
+split read/write halves for shell and tunnel handles.
 
 ## Work Allowed Now
 
@@ -134,15 +135,21 @@ Done when:
 
 ## Immediate Backlog
 
-The version-specific `0.1.1` scope is completed. Remaining work is tracked in
-[`0.1.1 Development Plan`](0.1.1-development-plan.md) and the deferred items in
-[`roadmap.md`](roadmap.md).
+The version-specific `0.1.3` scope is completed. Remaining work is tracked in the
+deferred items in [`roadmap.md`](roadmap.md).
 
-1. Documentation reconciliation and governance drift fix — completed in 0.1.1.
-2. Forwarding lifecycle tests (StreamLocal close/abort, TCP cancellation) —
-   completed in 0.1.1.
-3. Known-hosts edge-case tests — completed in 0.1.1.
-4. SFTP server handler error-to-status-code mapping — completed in 0.1.1.
+Completed in 0.1.1: documentation reconciliation and governance drift fix,
+forwarding lifecycle tests (StreamLocal close/abort), known-hosts edge-case
+tests, SFTP server handler error-to-status-code mapping.
 
-Deferred beyond `0.1.1`: hashed known-hosts matching/writing, wildcard
-known-hosts matching, dynamic SOCKS-style forwarding, and SFTP v4+ extensions.
+Completed in 0.1.2: security leaks (X11 cookies, keyboard-interactive
+responses), data-loss bugs (ShellAsyncIo stderr drop, KnownHosts::check
+short-circuit), API contract fixes (Credential::PartialEq, Endpoint::Display,
+#[non_exhaustive] markers), small missing features (CommandOutput::check_success,
+tilde expansion, TerminalMode variants, comma-separated known-hosts parsing),
+debug redaction tests.
+
+Deferred beyond `0.1.2`: large data tests, ShellAsyncIo lifecycle tests,
+remaining SftpServerHandler method coverage, hashed known-hosts matching/writing,
+wildcard known-hosts matching, dynamic SOCKS-style forwarding, SFTP v4+
+extensions.

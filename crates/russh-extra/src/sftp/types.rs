@@ -385,11 +385,17 @@ impl fmt::Display for SftpMetadata {
 pub struct SftpOpenMode(u32);
 
 impl SftpOpenMode {
+    /// Open for reading.
     pub const READ: Self = Self(0x00000001);
+    /// Open for writing.
     pub const WRITE: Self = Self(0x00000002);
+    /// Force all writes to append data to the end of the file.
     pub const APPEND: Self = Self(0x00000004);
+    /// Create the file if it does not exist.
     pub const CREATE: Self = Self(0x00000008);
+    /// Truncate the file to zero length if it exists.
     pub const TRUNCATE: Self = Self(0x00000010);
+    /// Fail if the file already exists (used with `CREATE`).
     pub const EXCLUSIVE: Self = Self(0x00000020);
 }
 

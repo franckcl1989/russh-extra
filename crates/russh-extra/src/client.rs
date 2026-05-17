@@ -373,6 +373,7 @@ impl ClientBuilder {
     }
 
     /// Sets strict host key checking.
+    #[deprecated = "use host_key_policy instead"]
     #[allow(deprecated)]
     pub fn strict_host_key_checking(mut self, enabled: bool) -> Self {
         self.config.set_strict_host_key_checking(enabled);
@@ -956,8 +957,12 @@ impl Session {
                     exit = CommandExit::Status(status);
                     exit_observed = true;
                 }
-                ChannelMsg::ExitSignal { signal_name, .. } if !exit_observed => {
-                    exit = CommandExit::Signal(signal_to_name(signal_name));
+                ChannelMsg::ExitSignal {
+                    signal_name,
+                    core_dumped,
+                    ..
+                } if !exit_observed => {
+                    exit = CommandExit::Signal(signal_to_name(signal_name), core_dumped);
                     exit_observed = true;
                 }
                 ChannelMsg::ExitStatus { .. } | ChannelMsg::ExitSignal { .. } => {}
@@ -1597,10 +1602,10 @@ fn map_connect_error(error: russh::Error) -> Error {
             "server host key is unknown to the configured policy",
         ),
         russh::Error::KeyChanged { line } => {
-            let reason = if line == 0 {
-                "server host key changed".to_owned()
+            let reason: std::borrow::Cow<'static, str> = if line == 0 {
+                "server host key changed".into()
             } else {
-                format!("server host key changed from known-hosts line {line}")
+                format!("server host key changed from known-hosts line {line}").into()
             };
             Error::host_key(HostKeyErrorKind::Changed, reason)
         }
@@ -1920,7 +1925,7 @@ mod tests {
     }
 
     #[test]
-    fn certificate_credential_debug_redacts_secrets() {
+    fn certificate_credential_rejects_invalid_key_format() {
         let cred = super::CertificateCredential::from_openssh_data(
             b"-----BEGIN OPENSSH PRIVATE KEY-----\ninvalid\n-----END OPENSSH PRIVATE KEY-----",
             b"ssh-ed25519-cert-v01@openssh.com AAAinvalid",

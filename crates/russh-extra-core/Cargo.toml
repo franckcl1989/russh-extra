@@ -10,9 +10,12 @@ license.workspace = true
 readme.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+categories.workspace = true
 
 [features]
+## No features enabled by default.
 default = []
+## Serde serialization for all core types.
 serde = ["dep:serde"]
 
 [dependencies]

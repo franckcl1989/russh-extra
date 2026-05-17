@@ -55,4 +55,5 @@ check-no-defaults:
 
 # Package validation (pre-release)
 package-check:
-    cargo package --workspace --allow-dirty
+    cargo package -p russh-extra-core
+    cargo package -p russh-extra
