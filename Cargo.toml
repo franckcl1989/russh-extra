@@ -17,15 +17,15 @@ license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/franckcl1989/russh-extra"
 rust-version = "1.95"
-version = "0.1.4"
+version = "0.1.5"
 
 [workspace.lints.rust]
 unsafe_code = "deny"
 
 [workspace.dependencies]
-russh-extra = { version = "0.1.4", path = "crates/russh-extra", default-features = false }
-russh-extra-core = { version = "0.1.4", path = "crates/russh-extra-core" }
-russh-extra-test-support = { version = "0.1.4", path = "crates/russh-extra-test-support" }
+russh-extra = { version = "0.1.5", path = "crates/russh-extra", default-features = false }
+russh-extra-core = { version = "0.1.5", path = "crates/russh-extra-core" }
+russh-extra-test-support = { version = "0.1.5", path = "crates/russh-extra-test-support" }
 
 async-trait = "0.1.89"
 base64 = "0.22"

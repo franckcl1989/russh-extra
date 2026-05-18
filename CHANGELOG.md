@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
+## [0.1.5] - 2026-05-18
+
+### Fixed
+
+- **Windows CI**: Fixed dead-code compilation errors on Windows where StreamLocal
+  forwarding types (`TunnelBindPoint::StreamLocal`, `start_remote_streamlocal_forward`)
+  and unused variables (`remote_streamlocal_forwards`, `bind`, `target`) triggered
+  `-D warnings` failures. Added `#[cfg_attr(not(unix), allow(...))]` attributes to
+  the three affected items in `tunnel.rs`.
+
 ## [0.1.4] - 2026-05-17
 
 ### Fixed
@@ -511,3 +521,4 @@ changes may occur without a new major version.
 [0.1.2]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.2
 [0.1.3]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.3
 [0.1.4]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.4
+[0.1.5]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.5

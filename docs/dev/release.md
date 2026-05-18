@@ -5,7 +5,7 @@ promised until the project declares a stable release policy.
 
 ## Versioning
 
-The workspace currently uses `0.1.4`. Before `1.0`, public APIs may change when
+The workspace currently uses `0.1.5`. Before `1.0`, public APIs may change when
 design docs require it or when a cleaner architecture is needed. Breaking
 changes are expected during this phase and should update design docs, roadmap
 status, tests, and examples in the same work item.
@@ -93,6 +93,6 @@ cargo package -p russh-extra
 cargo publish -p russh-extra
 ```
 
-`russh-extra` depends on `russh-extra-core = "0.1.4"`, so the core crate must
+`russh-extra` depends on `russh-extra-core = "0.1.5"`, so the core crate must
 be available in the crates.io index before packaging or publishing the
 user-facing crate without a path override.

@@ -13,6 +13,8 @@ missing features, debug redaction tests), the 0.1.3 hardening release (test
 hardening, API completions, documentation drift fixes, dependency update),
 and the 0.1.4 hardening release (Windows CI fix, timeout wiring, SFTP error
 quality, base64 data integrity, tracing coverage, 284 tests).
+The 0.1.5 release fixes a Windows CI dead-code regression in the StreamLocal
+forwarding compiler attributes.
 
 The next gate is `0.2`: deferred features including hashed and wildcard
 known-hosts matching, dynamic SOCKS forwarding, SFTP v4+ extensions, and

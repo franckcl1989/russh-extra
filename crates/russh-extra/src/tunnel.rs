@@ -102,6 +102,7 @@ impl TunnelBuilder {
     ///
     /// For remote forwarding, sends a global request to the server and
     /// handles incoming forwarded channels.
+    #[cfg_attr(not(unix), allow(unused_variables))]
     pub async fn start(self) -> Result<Tunnel> {
         let handle = self
             .handle
@@ -177,6 +178,7 @@ impl TunnelBuilder {
 #[derive(Clone, Debug)]
 enum TunnelBindPoint {
     Tcp(SocketAddr),
+    #[cfg_attr(not(unix), allow(dead_code))]
     StreamLocal(PathBuf),
 }
 
@@ -642,6 +644,7 @@ async fn forward_direct_streamlocal_connection(
 
 // ── Remote streamlocal forwarding ─────────────────────────────────────
 
+#[cfg_attr(not(unix), allow(dead_code))]
 async fn start_remote_streamlocal_forward(
     handle: Arc<Mutex<russh::client::Handle<ClientHandler>>>,
     remote_forwards: RemoteStreamLocalForwardMap,

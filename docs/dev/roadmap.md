@@ -20,8 +20,8 @@ local layers over public `russh` APIs.
 
 1. `0.1.3` hardening release complete (263 tests, see
    [0.1.3 Development Plan](0.1.3-development-plan.md)).
-2. `0.1.4` hardening release complete (284 tests): Windows CI fix, timeout
-   wiring, SFTP error quality, base64 data integrity, tracing coverage.
+2. `0.1.5` hardening release complete (284 tests): Windows CI dead-code
+   attribute fix for StreamLocal forwarding.
 3. Prepare `0.2` planning: hashed known-hosts matching, wildcard matching,
    dynamic SOCKS forwarding, SFTP v4+ extensions, split read/write halves.
 4. Keep deferred features tracked in the roadmap sections below.
