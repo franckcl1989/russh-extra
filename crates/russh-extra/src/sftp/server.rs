@@ -268,13 +268,17 @@ impl SftpServerRuntime {
                 if buf.len() < 4 {
                     break;
                 }
-                let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-                if len > 256 * 1024 || len == 0 {
-                    tracing::warn!(len, "invalid SFTP packet length, closing sftp channel");
+                let len_u32 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                if len_u32 > 256 * 1024 || len_u32 == 0 {
+                    tracing::warn!(
+                        len = len_u32,
+                        "invalid SFTP packet length, closing sftp channel"
+                    );
                     self.channels.remove(&channel);
                     self.buffers.remove(&channel);
                     return Ok(());
                 }
+                let len = len_u32 as usize;
                 if buf.len() < 4 + len {
                     break;
                 }

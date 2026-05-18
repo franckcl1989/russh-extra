@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
+## [0.1.6] - 2026-05-18
+
+### Added
+
+- `Keepalive` accessor methods: `new()`, `enabled()`, `interval()`, `max_missed()`.
+  Fields are now private for forward compatibility.
+- `#[non_exhaustive]` on `KeyboardInteractivePromptItem` and
+  `KeyboardInteractivePrompt` for future field additions.
+- Lock ordering documentation in `sftp/client.rs`: `abort_reason` before `pending`.
+- TODO(0.2) markers at unbounded channel sites in tunnel, shell, and server modules.
+- SFTP read/write background tasks now store `AbortHandle`s in
+  `SftpClientRuntime` for future controlled shutdown.
+
+### Fixed
+
+- **32-bit correctness**: SFTP packet length and byte-count parsing now validates
+  `u32` values against `MAX_SFTP_PACKET_SIZE` before casting to `usize`,
+  preventing potential integer overflow on 32-bit platforms.
+- **SFTP entry count caps**: `decode_version()` and `decode_name()` now cap
+  extension/entry counts to plausible maxima derived from remaining payload size.
+- **Drop safety**: `SftpFile::Drop` and `SftpDir::Drop` use
+  `Handle::try_current()` to avoid `tokio::spawn` panics during runtime shutdown.
+- **Shell exit-status**: `run_channel_bridge` now drains remaining channel
+  messages (including `ExitStatus`/`ExitSignal`) after the command channel
+  closes, preventing loss of exit metadata.
+- **Observability**: Trust-on-first-use `known_hosts.add_entry()` failures now
+  emit `tracing::warn!` instead of silently dropping the error.
+- **Observability**: Streaming exec handler panics now emit
+  `tracing::error!(?join_error, "streaming exec handler panicked")`.
+- **Error chaining**: Bind failures in local TCP forwarding and channel send
+  errors in `StreamingExecContext` now preserve the lower-level source error
+  via `forwarding_with_source()` and `channel_with_source()`.
+- **Incorrect `#[non_exhaustive]`**: `Keepalive` had `#[non_exhaustive]` with
+  all-public fields, making the attribute ineffective. Fields are now private.
+
+### Changed
+
+- `AGENTS.md` §17: removed aspirational `secrecy`/`zeroize` mention; replaced
+  with explicit manual `Debug` redaction rule.
+- `SECURITY.md`: updated "once the project publishes" wording to reflect active
+  crates.io presence since May 2026.
+
+### Documentation
+
+- **README**: Server example fixed — `PrivateKey::random()?` error conversion
+  now uses `Error::transport_with_source()`.
+- **CHANGELOG**: 0.1.4 "final release" claim softened to reflect 0.1.5 follow-up.
+
 ## [0.1.5] - 2026-05-18
 
 ### Fixed
@@ -99,7 +147,7 @@ changes may occur without a new major version.
   and illustrative types updated to match actual implementation.
 - `README.md`: Project Status section added with test count and CHANGELOG link.
 - `AGENTS.md` §26: Updated illustrative `version = "0.1.4"` to match current release.
-- `0.1.4` is the final release in the `0.1.x` series.
+- `0.1.4` was intended as the final release in the `0.1.x` series (superseded by 0.1.5).
 
 ## [0.1.3] - 2026-05-17
 
@@ -522,3 +570,4 @@ changes may occur without a new major version.
 [0.1.3]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.3
 [0.1.4]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.4
 [0.1.5]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.5
+[0.1.6]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.6

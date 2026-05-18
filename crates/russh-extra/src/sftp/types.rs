@@ -87,9 +87,11 @@ impl Drop for SftpFile {
         }
         let client = self.client.clone();
         let handle = self.handle.clone();
-        tokio::spawn(async move {
-            let _ = client.close(&handle).await;
-        });
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                let _ = client.close(&handle).await;
+            });
+        }
     }
 }
 
@@ -167,9 +169,11 @@ impl Drop for SftpDir {
         }
         let client = self.client.clone();
         let handle = self.handle.clone();
-        tokio::spawn(async move {
-            let _ = client.close(&handle).await;
-        });
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                let _ = client.close(&handle).await;
+            });
+        }
     }
 }
 

@@ -282,16 +282,38 @@ impl Timeouts {
 }
 
 /// Keepalive configuration.
-#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Keepalive {
+    enabled: bool,
+    interval: Duration,
+    max_missed: u32,
+}
+
+impl Keepalive {
+    /// Creates a `Keepalive` with the given configuration.
+    pub fn new(enabled: bool, interval: Duration, max_missed: u32) -> Self {
+        Self {
+            enabled,
+            interval,
+            max_missed,
+        }
+    }
+
     /// Whether keepalives are enabled.
-    pub enabled: bool,
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
     /// Interval between keepalive messages.
-    pub interval: Duration,
+    pub fn interval(&self) -> Duration {
+        self.interval
+    }
+
     /// Number of unanswered keepalives before disconnecting.
-    pub max_missed: u32,
+    pub fn max_missed(&self) -> u32 {
+        self.max_missed
+    }
 }
 
 impl Default for Keepalive {

@@ -9,6 +9,9 @@ use std::collections::HashMap;
 
 use russh_extra_core::{Error, Result, SftpErrorKind};
 
+/// Maximum SFTP packet payload size (256 KiB).
+pub(crate) const MAX_SFTP_PACKET_SIZE: u32 = 256 * 1024;
+
 pub(crate) const FXP_INIT: u8 = 1;
 pub(crate) const FXP_VERSION: u8 = 2;
 pub(crate) const FXP_OPEN: u8 = 3;
@@ -197,7 +200,10 @@ pub(crate) fn encode_fsetstat(id: u32, handle: &str, attrs: &SftpFileAttrs) -> V
 pub(crate) fn decode_version(payload: &[u8]) -> Result<(u32, HashMap<String, String>)> {
     let mut pos = 0;
     let version = pop_u32(payload, &mut pos)?;
-    let count = pop_u32(payload, &mut pos)? as usize;
+    let count = pop_u32(payload, &mut pos)?;
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    let max_count = payload.len().saturating_sub(pos) / 8;
+    let count = count.min(max_count).min(128);
     let mut extensions = HashMap::new();
     for _ in 0..count {
         let key = pop_string(payload, &mut pos)?;
@@ -233,7 +239,10 @@ pub(crate) fn decode_data(payload: &[u8]) -> Result<(u32, Vec<u8>)> {
 pub(crate) fn decode_name(payload: &[u8]) -> Result<(u32, Vec<SftpNameEntry>)> {
     let mut pos = 0;
     let id = pop_u32(payload, &mut pos)?;
-    let count = pop_u32(payload, &mut pos)? as usize;
+    let count = pop_u32(payload, &mut pos)?;
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    let max_count = payload.len().saturating_sub(pos) / 16;
+    let count = count.min(max_count).min(65536);
     let mut entries = Vec::with_capacity(count);
     for _ in 0..count {
         let filename = pop_string(payload, &mut pos)?;
@@ -612,7 +621,14 @@ fn pop_string(data: &[u8], pos: &mut usize) -> Result<String> {
 }
 
 fn pop_bytes(data: &[u8], pos: &mut usize) -> Result<Vec<u8>> {
-    let len = pop_u32(data, pos)? as usize;
+    let len = pop_u32(data, pos)?;
+    if len > MAX_SFTP_PACKET_SIZE {
+        return Err(Error::sftp(
+            SftpErrorKind::Protocol,
+            format!("SFTP byte length {len} exceeds maximum {MAX_SFTP_PACKET_SIZE}"),
+        ));
+    }
+    let len = len as usize;
     check_bounds(data, *pos, len)?;
     let bytes = data[*pos..*pos + len].to_vec();
     *pos += len;

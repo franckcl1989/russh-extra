@@ -277,6 +277,7 @@ impl ShellHandle {
     /// The original `ShellHandle` is consumed. After calling this method,
     /// use the returned `ShellAsyncIo` for all I/O.
     pub fn into_async_io(self) -> ShellAsyncIo {
+        // TODO(0.2): replace unbounded channels with bounded + try_send backoff.
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let exit = Arc::new(Mutex::new(CommandExit::Missing));
@@ -877,7 +878,34 @@ async fn run_channel_bridge(
     mut cmd_rx: mpsc::UnboundedReceiver<ShellCmd>,
     exit: Arc<Mutex<CommandExit>>,
 ) {
+    let mut cmd_closed = false;
     loop {
+        if cmd_closed {
+            match channel.wait().await {
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    *exit.lock().await = CommandExit::Status(exit_status);
+                }
+                Some(ChannelMsg::ExitSignal {
+                    signal_name,
+                    core_dumped,
+                    ..
+                }) => {
+                    *exit.lock().await = CommandExit::Signal(
+                        crate::client::signal_to_name(signal_name),
+                        core_dumped,
+                    );
+                }
+                Some(ChannelMsg::Data { data }) => {
+                    let _ = read_tx.send(data.to_vec());
+                }
+                Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
+                    let _ = read_tx.send(data.to_vec());
+                }
+                Some(ChannelMsg::Close) | None => break,
+                _ => {}
+            }
+            continue;
+        }
         tokio::select! {
             msg = channel.wait() => {
                 match msg {
@@ -919,7 +947,7 @@ async fn run_channel_bridge(
                         let _ = channel.signal(sig).await;
                     }
                     None => {
-                        break;
+                        cmd_closed = true;
                     }
                 }
             }

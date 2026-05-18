@@ -569,12 +569,22 @@ impl client::Handler for ClientHandler {
                 KnownHostStatus::Changed => return Err(russh::Error::KeyChanged { line: 0 }),
                 KnownHostStatus::NotFound => {
                     if self.known_hosts_accept_new {
-                        let _ = known_hosts.add_entry(
+                        match known_hosts.add_entry(
                             self.endpoint.host(),
                             self.endpoint.port(),
                             server_public_key,
                             public_key_algorithm(server_public_key),
-                        );
+                        ) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    host = self.endpoint.host(),
+                                    port = self.endpoint.port(),
+                                    "failed to persist new known-hosts entry during trust-on-first-use",
+                                );
+                            }
+                        }
                         return Ok(true);
                     }
                     return Ok(false);
@@ -1119,8 +1129,8 @@ impl Session {
 fn russh_client_config(config: &ClientConfig) -> client::Config {
     let mut russh_config = client::Config::default();
     let keepalive = config.keepalive();
-    russh_config.keepalive_interval = keepalive.enabled.then_some(keepalive.interval);
-    russh_config.keepalive_max = keepalive.max_missed as usize;
+    russh_config.keepalive_interval = keepalive.enabled().then_some(keepalive.interval());
+    russh_config.keepalive_max = keepalive.max_missed() as usize;
     russh_config
 }
 

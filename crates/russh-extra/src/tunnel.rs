@@ -288,16 +288,18 @@ async fn start_local_forward(
     _timeouts: Timeouts,
 ) -> Result<Tunnel> {
     let bind_addr = format!("{}:{}", bind.host(), bind.port());
-    let listener = TcpListener::bind(&bind_addr).await.map_err(|_e| {
-        Error::forwarding(
+    let listener = TcpListener::bind(&bind_addr).await.map_err(|e| {
+        Error::forwarding_with_source(
             ForwardingErrorKind::Bind,
+            e,
             format!("failed to bind local listener at {}", bind_addr),
         )
     })?;
 
-    let bound = listener.local_addr().map_err(|_e| {
-        Error::forwarding(
+    let bound = listener.local_addr().map_err(|e| {
+        Error::forwarding_with_source(
             ForwardingErrorKind::Listen,
+            e,
             "failed to get local listener address",
         )
     })?;
@@ -834,6 +836,7 @@ impl DirectTcpBuilder {
             )
         })?;
 
+        // TODO(0.2): replace unbounded channels with bounded + try_send backoff.
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 
@@ -936,6 +939,7 @@ impl DirectStreamLocalBuilder {
             )
         })?;
 
+        // TODO(0.2): replace unbounded channels with bounded + try_send backoff.
         let (read_tx, read_rx) = mpsc::unbounded_channel();
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
 

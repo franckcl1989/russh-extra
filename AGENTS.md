@@ -726,12 +726,11 @@ Mandatory rules:
 2. Do not accept changed host keys silently.
 3. Do not log passwords, private keys, passphrases, or raw authentication payloads.
 4. Do not expose secrets through `Debug`.
-5. Use `secrecy` or equivalent secret wrappers where appropriate.
-6. Use `zeroize` where sensitive memory cleanup is appropriate and practical.
-7. Make insecure configuration names explicit, such as `InsecureAcceptAny`.
-8. Document security tradeoffs in README and crate docs.
-9. Treat parsing of untrusted files such as `known_hosts` as fallible and non-panicking.
-10. Prefer secure defaults over convenience defaults.
+5. Use manual `Debug` redaction for secret-bearing types (passwords, keys, cookies).
+6. Make insecure configuration names explicit, such as `InsecureAcceptAny`.
+7. Document security tradeoffs in README and crate docs.
+8. Treat parsing of untrusted files such as `known_hosts` as fallible and non-panicking.
+9. Prefer secure defaults over convenience defaults.
 
 Any API that weakens host key verification or credential handling must be clearly documented with warnings.
 
@@ -1044,7 +1043,7 @@ Recommended `Cargo.toml` metadata:
 ```toml
 [package]
 name = "..."
-version = "0.1.5"
+version = "0.1.6"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A high-level async SSH API built directly on top of russh"
@@ -1072,6 +1071,7 @@ auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
 0.1.3 hardening release published 2026-05-17 (263 tests, 0 failures).
 0.1.4 hardening release published 2026-05-17 (284 tests, 0 failures).
 0.1.5 hardening release published 2026-05-18 (Windows CI dead-code fix).
+0.1.6 hardening release committed 2026-05-18 (comprehensive audit + stability fixes).
 284 tests pass, 0 failures.
 
 Suggested roadmap:

@@ -1040,6 +1040,7 @@ impl AuthDecision {
 }
 
 /// A single prompt item for keyboard-interactive authentication.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct KeyboardInteractivePromptItem {
     /// The prompt text shown to the user.
@@ -1062,6 +1063,7 @@ impl KeyboardInteractivePromptItem {
 ///
 /// Each round of keyboard-interactive auth sends one or more prompts
 /// to the client.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct KeyboardInteractivePrompt {
     /// A human-readable name for this prompt block (may be empty).
@@ -1353,14 +1355,18 @@ impl StreamingExecContext {
     pub async fn stdout(&mut self, data: impl Into<Bytes>) -> Result<()> {
         self.cmd_tx
             .send(StreamingExecCmd::Stdout(data.into()))
-            .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "exec channel closed"))
+            .map_err(|e| {
+                Error::channel_with_source(ChannelErrorKind::Close, "exec channel closed", e)
+            })
     }
 
     /// Sends data to stderr.
     pub async fn stderr(&mut self, data: impl Into<Bytes>) -> Result<()> {
         self.cmd_tx
             .send(StreamingExecCmd::Stderr(data.into()))
-            .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "exec channel closed"))
+            .map_err(|e| {
+                Error::channel_with_source(ChannelErrorKind::Close, "exec channel closed", e)
+            })
     }
 
     /// Sends an exit status and signals the channel to close.
@@ -1369,7 +1375,9 @@ impl StreamingExecContext {
     pub async fn exit_status(&mut self, status: u32) -> Result<()> {
         self.cmd_tx
             .send(StreamingExecCmd::Exited(CommandExit::Status(status)))
-            .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "exec channel closed"))
+            .map_err(|e| {
+                Error::channel_with_source(ChannelErrorKind::Close, "exec channel closed", e)
+            })
     }
 
     /// Sends an exit signal and signals the channel to close.
@@ -1383,7 +1391,9 @@ impl StreamingExecContext {
     pub async fn exit_signal(&mut self, signal: String) -> Result<()> {
         self.cmd_tx
             .send(StreamingExecCmd::Exited(CommandExit::Signal(signal, false)))
-            .map_err(|_| Error::channel_kind(ChannelErrorKind::Close, "exec channel closed"))
+            .map_err(|e| {
+                Error::channel_with_source(ChannelErrorKind::Close, "exec channel closed", e)
+            })
     }
 }
 
@@ -2050,6 +2060,7 @@ impl HighLevelRusshHandler {
         username: Username,
         handler: StreamingExecCallback,
     ) -> std::result::Result<(), ServerRuntimeError> {
+        // TODO(0.2): replace unbounded channels with bounded + try_send backoff.
         let (stdin_tx, stdin_rx) = mpsc::unbounded_channel::<Bytes>();
         let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<StreamingExecCmd>();
 
@@ -2132,10 +2143,21 @@ impl HighLevelRusshHandler {
                 cmd_rx.close();
             }
 
-            let handler_err = !matches!(handler_task.await, Ok(Ok(())));
+            let (handler_err, handler_panicked) = match handler_task.await {
+                Ok(Ok(())) => (false, false),
+                Ok(Err(_)) => (true, false),
+                Err(join_error) => {
+                    tracing::error!(?join_error, "streaming exec handler panicked");
+                    (true, true)
+                }
+            };
 
             if !exit_sent {
-                let status = if handler_err { 1 } else { 0 };
+                let status = if handler_err || handler_panicked {
+                    1
+                } else {
+                    0
+                };
                 let _ = handle.exit_status_request(channel, status).await;
             }
 

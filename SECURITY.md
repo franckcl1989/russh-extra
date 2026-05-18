@@ -14,8 +14,9 @@ Request a private contact path and the maintainer will reach out.
 
 ## Supported Versions
 
-No stable versions exist yet. Security fixes will be released as patch versions
-of the latest pre-release once the project publishes to crates.io.
+No stable versions exist yet. Security fixes are released as patch versions
+of the latest pre-release. The project has been published to crates.io
+since May 2026.
 
 ## Disclosure Policy
 

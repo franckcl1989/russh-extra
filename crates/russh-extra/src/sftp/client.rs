@@ -3,6 +3,13 @@
 //! Implements the SSH subsystem lifecycle, SFTP version negotiation,
 //! request pipelining, and public API methods.
 
+//! SFTP v3 client runtime: request pipelining, response dispatch, and
+//! protocol-level error handling.
+//!
+//! Lock ordering: always acquire `abort_reason` before `pending`,
+//! or acquire `pending` alone. Never acquire `pending` then
+//! `abort_reason` within the same critical section.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -13,7 +20,7 @@ use tokio::sync::{Mutex, mpsc, oneshot};
 use super::packet;
 use super::types::{SftpDir, SftpDirEntry, SftpFile, SftpMetadata};
 
-const MAX_PACKET_SIZE: usize = 256 * 1024;
+use super::packet::MAX_SFTP_PACKET_SIZE;
 
 #[derive(Clone)]
 pub(crate) struct SftpClientRuntime {
@@ -21,6 +28,8 @@ pub(crate) struct SftpClientRuntime {
     pending: Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SftpResponse>>>>>,
     next_id: Arc<std::sync::atomic::AtomicU32>,
     abort_reason: Arc<Mutex<Option<String>>>,
+    _read_abort: Arc<tokio::task::AbortHandle>,
+    _write_abort: Arc<tokio::task::AbortHandle>,
 }
 
 #[derive(Debug)]
@@ -92,13 +101,13 @@ impl SftpClientRuntime {
 
         let read_pending = pending.clone();
         let read_abort_reason = abort_reason.clone();
-        tokio::spawn(async move {
+        let read_handle = tokio::spawn(async move {
             read_task(read_half, read_pending, read_abort_reason).await;
         });
 
         let write_pending = pending.clone();
         let write_abort_reason = abort_reason.clone();
-        tokio::spawn(async move {
+        let write_handle = tokio::spawn(async move {
             write_task(write_half, write_rx, write_pending, write_abort_reason).await;
         });
 
@@ -107,6 +116,8 @@ impl SftpClientRuntime {
             pending,
             next_id,
             abort_reason,
+            _read_abort: Arc::new(read_handle.abort_handle()),
+            _write_abort: Arc::new(write_handle.abort_handle()),
         })
     }
 
@@ -361,10 +372,13 @@ async fn read_task(
                     if buf.len() < 4 {
                         break;
                     }
-                    let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-                    if len > MAX_PACKET_SIZE || len == 0 {
-                        let msg = format!("SFTP protocol error: invalid packet length {len}");
-                        tracing::warn!(len, "invalid SFTP packet length, aborting read task");
+                    let len_u32 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                    if len_u32 > MAX_SFTP_PACKET_SIZE || len_u32 == 0 {
+                        let msg = format!("SFTP protocol error: invalid packet length {len_u32}");
+                        tracing::warn!(
+                            len = len_u32,
+                            "invalid SFTP packet length, aborting read task"
+                        );
                         {
                             *abort_reason.lock().await = Some(msg.clone());
                         }
@@ -374,6 +388,7 @@ async fn read_task(
                         }
                         return;
                     }
+                    let len = len_u32 as usize;
                     if buf.len() < 4 + len {
                         break;
                     }
@@ -501,13 +516,14 @@ async fn read_sftp_response(read_half: &mut russh::ChannelReadHalf) -> Result<Op
                 if buf.len() < 4 {
                     continue;
                 }
-                let len = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-                if len > MAX_PACKET_SIZE || len == 0 {
+                let len_u32 = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                if len_u32 > MAX_SFTP_PACKET_SIZE || len_u32 == 0 {
                     return Err(Error::sftp(
                         SftpErrorKind::Protocol,
                         "invalid SFTP packet length during negotiation",
                     ));
                 }
+                let len = len_u32 as usize;
                 if buf.len() < 4 + len {
                     continue;
                 }
@@ -526,18 +542,22 @@ mod tests {
 
     #[tokio::test]
     async fn abort_reason_wired_in_sftp_client_runtime() {
-        let (_write_tx, _write_rx) = mpsc::channel::<(u32, Vec<u8>)>(8);
-        let pending = Arc::new(Mutex::new(HashMap::new()));
-        let next_id = Arc::new(std::sync::atomic::AtomicU32::new(100));
-        let abort_reason = Arc::new(Mutex::new(Some(
+        let (write_tx, _write_rx) = mpsc::channel::<(u32, Vec<u8>)>(8);
+        let _pending: Arc<Mutex<HashMap<u32, oneshot::Sender<Result<SftpResponse>>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let _next_id = Arc::new(std::sync::atomic::AtomicU32::new(100));
+        let _abort_reason: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(Some(
             "SFTP protocol error: invalid packet length 999999".into(),
         )));
+        let dummy_abort = tokio::spawn(std::future::ready(())).abort_handle();
 
         let runtime = SftpClientRuntime {
-            write_tx: _write_tx,
-            pending,
-            next_id,
-            abort_reason: abort_reason.clone(),
+            write_tx: write_tx.clone(),
+            pending: _pending.clone(),
+            next_id: _next_id.clone(),
+            abort_reason: _abort_reason.clone(),
+            _read_abort: Arc::new(dummy_abort.clone()),
+            _write_abort: Arc::new(dummy_abort.clone()),
         };
 
         let reason = runtime.abort_reason.lock().await;
