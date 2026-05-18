@@ -7,6 +7,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 once a stable release policy is declared. During the pre-1.0 phase, breaking
 changes may occur without a new major version.
 
+## [0.1.7] - 2026-05-18
+
+### Added
+
+- `#[non_exhaustive]` on 21 public types: `Username`, `Password`, `Endpoint`,
+  `SessionId`, `Keepalive`, `SftpOpenMode`, and 15 server context types
+  (`KeyboardInteractiveContext`, `ShellContext`, `PtyContext`, `SubsystemContext`,
+  `EnvRequest`, `WindowChange`, `TcpipForwardContext`, `StreamLocalForwardContext`,
+  `DirectTcpipContext`, `ForwardedTcpipContext`, `DirectStreamLocalContext`,
+  `X11RequestContext`, `X11ChannelContext`, `AgentRequestContext`, and
+  `KeyboardInteractiveContext`).
+- `Timeouts` accessor methods: `connect()`, `auth()`, `channel_open()`. Fields
+  are now private for forward compatibility.
+- `[[example]]` sections with `required-features` in Cargo.toml for all 14 examples.
+- Unit tests: `Keepalive` (4 tests), `Timeouts` (3 tests), `KnownHosts::merge()`.
+- `SFTP_CHUNK_SIZE` constant (32 KiB) in `sftp/mod.rs`.
+- `ClientKeyboardInteractiveInfo` now derives `Clone`.
+- `SftpOpenMode` now derives `Eq`, `Hash`, `PartialEq`.
+- `SftpMetadata` now derives `Eq`, `PartialEq`.
+- `SftpFile::read()` signature changed from `&mut self` to `&self`.
+- `SSH_FILEXFER_ATTR_EXTENDED` constant defined and detected with a clear error
+  in `pop_attrs` (extended attributes not supported).
+- `CommandOutput::clone()` documents that all captured output bytes are copied.
+
+### Fixed
+
+- **SFTP protocol correctness**: `push_attrs` now gates on attribute flags
+  (`SSH_FILEXFER_ATTR_SIZE`, etc.) instead of `Option` presence. Fixes broken
+  wire encoding when only one field of a paired attribute (uid/gid or
+  atime/mtime) was set.
+- **SFTP protocol correctness**: `SftpMetadata::to_packet()` ensures both field
+  values are populated when an attribute flag is set.
+- **SFTP protocol reliability**: Malformed response packets now preserve the
+  request ID when decoding fails, preventing unrecoverable pending-request leaks.
+- **SFTP protocol correctness**: Unexpected `SSH_FX_OK` status responses are
+  now errors instead of silently returning empty/default values in
+  `expect_attrs()`, `expect_name_single()`, and `readdir_batch()`.
+- **serde credential leak**: `Identity::PrivateKey`, `Identity::KeyFile`,
+  `Identity::Agent`, `Credential::Password`, and `Credential::Identity` are
+  now `#[serde(skip)]` when the `serde` feature is enabled. `Password` no
+  longer derives `Deserialize`/`Serialize`.
+- **Memory safety**: `ServerRuntime::take_error()` now uses
+  `unwrap_or_else(|e| e.into_inner())` instead of silently ignoring poisoned
+  mutex locks with `.ok()`.
+- **Resource bounding**: Forwarding target TCP/Unix connections in
+  `copy_bidirectional_with_addr()` and `copy_bidirectional_with_unix_path()`
+  now have a 30-second connect timeout.
+- **Constant consistency**: `sftp/server.rs` uses `packet::MAX_SFTP_PACKET_SIZE`
+  instead of a raw `256 * 1024`.
+- **Observability**: `read_to_vec()` emits `tracing::warn!` on `file.close()`
+  failure instead of silently discarding the error.
+- **Documentation**: `pub use russh;` now has a doc comment explaining its role
+  as an escape hatch for advanced users.
+- **Documentation**: Example doc comments fixed (subsystem "handshake",
+  known_hosts "3 workflows" → "2 workflows").
+
+### Changed
+
+- `Password` removed `serde::Deserialize`/`serde::Serialize` derives; added
+  documentation recommending environment variables for external credential
+  storage.
+- `Identity` enum: all three variants (`Agent`, `KeyFile`, `PrivateKey`) are
+  now `#[serde(skip)]` when `serde` is enabled.
+- `Credential` enum: `Password`, `Identity`, and `KeyboardInteractive` variants
+  are `#[serde(skip)]` when `serde` is enabled.
+- `unreachable!()` replaced with a proper `Err(Error::invalid_config(...))` in
+  `Endpoint::parse()`.
+
 ## [0.1.6] - 2026-05-18
 
 ### Added
@@ -571,3 +639,4 @@ changes may occur without a new major version.
 [0.1.4]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.4
 [0.1.5]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.5
 [0.1.6]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.6
+[0.1.7]: https://github.com/franckcl1989/russh-extra/releases/tag/v0.1.7

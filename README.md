@@ -567,7 +567,7 @@ and implementation status:
 
 ## Project Status
 
-`0.1.6` is the final release in the `0.1.x` series. The crate supports client,
+`0.1.7` is the final release in the `0.1.x` series. The crate supports client,
 server, authentication, known-hosts, command execution, shell, PTY, subsystems,
 X11 forwarding, agent forwarding, OpenSSH certificate authentication, auth
 banner, local/remote TCP and StreamLocal forwarding, and SFTP (client and

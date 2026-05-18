@@ -1,5 +1,11 @@
 //! Remote command execution with password authentication.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example client_exec --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   SSH_HOST=example.com
 //!   SSH_PORT=22        (optional, defaults to 22)

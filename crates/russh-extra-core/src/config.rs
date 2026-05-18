@@ -252,12 +252,9 @@ impl Default for ServerConfig {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Timeouts {
-    /// Timeout for establishing a TCP connection.
-    pub connect: Duration,
-    /// Timeout for completing authentication.
-    pub auth: Duration,
-    /// Timeout for opening a channel.
-    pub channel_open: Duration,
+    connect: Duration,
+    auth: Duration,
+    channel_open: Duration,
 }
 
 impl Default for Timeouts {
@@ -279,9 +276,25 @@ impl Timeouts {
             channel_open,
         }
     }
+
+    /// Returns the TCP connection timeout.
+    pub fn connect(&self) -> Duration {
+        self.connect
+    }
+
+    /// Returns the authentication timeout.
+    pub fn auth(&self) -> Duration {
+        self.auth
+    }
+
+    /// Returns the channel-open timeout.
+    pub fn channel_open(&self) -> Duration {
+        self.channel_open
+    }
 }
 
 /// Keepalive configuration.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Keepalive {
@@ -422,5 +435,58 @@ mod tests {
         let debug = format!("{:?}", config);
         assert!(!debug.contains("my-secret-password"));
         assert!(debug.contains("Password(***)"));
+    }
+
+    #[test]
+    fn keepalive_defaults_enabled_with_30s_interval() {
+        let k = crate::Keepalive::default();
+        assert!(k.enabled());
+        assert_eq!(k.interval(), std::time::Duration::from_secs(30));
+        assert_eq!(k.max_missed(), 3);
+    }
+
+    #[test]
+    fn keepalive_new_stores_fields() {
+        let k = crate::Keepalive::new(true, std::time::Duration::from_secs(15), 5);
+        assert!(k.enabled());
+        assert_eq!(k.interval(), std::time::Duration::from_secs(15));
+        assert_eq!(k.max_missed(), 5);
+    }
+
+    #[test]
+    fn keepalive_disabled_still_stores_interval() {
+        let k = crate::Keepalive::new(false, std::time::Duration::from_secs(5), 1);
+        assert!(!k.enabled());
+        assert_eq!(k.interval(), std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn timeouts_new_stores_fields() {
+        use std::time::Duration;
+        let t = crate::Timeouts::new(
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+            Duration::from_secs(2),
+        );
+        assert_eq!(t.connect(), Duration::from_secs(5));
+        assert_eq!(t.auth(), Duration::from_secs(10));
+        assert_eq!(t.channel_open(), Duration::from_secs(2));
+    }
+
+    #[test]
+    fn timeouts_defaults_are_reasonable() {
+        let t = crate::Timeouts::default();
+        assert!(t.connect() > std::time::Duration::ZERO);
+        assert!(t.auth() > std::time::Duration::ZERO);
+        assert!(t.channel_open() > std::time::Duration::ZERO);
+    }
+
+    #[test]
+    fn timeouts_with_zero_durations_stores_them() {
+        use std::time::Duration;
+        let t = crate::Timeouts::new(Duration::ZERO, Duration::ZERO, Duration::ZERO);
+        assert_eq!(t.connect(), Duration::ZERO);
+        assert_eq!(t.auth(), Duration::ZERO);
+        assert_eq!(t.channel_open(), Duration::ZERO);
     }
 }

@@ -62,3 +62,59 @@ tracing-subscriber = { workspace = true }
 
 [lints]
 workspace = true
+
+[[example]]
+name = "client_exec"
+required-features = ["client", "aws-lc-rs"]
+
+[[example]]
+name = "client_exec_password"
+required-features = ["client", "aws-lc-rs"]
+
+[[example]]
+name = "client_private_key"
+required-features = ["client", "known-hosts", "aws-lc-rs"]
+
+[[example]]
+name = "client_shell"
+required-features = ["client", "shell", "aws-lc-rs"]
+
+[[example]]
+name = "client_subsystem"
+required-features = ["client", "shell", "aws-lc-rs"]
+
+[[example]]
+name = "client_sftp"
+required-features = ["client", "sftp", "aws-lc-rs"]
+
+[[example]]
+name = "client_known_hosts"
+required-features = ["client", "known-hosts", "aws-lc-rs"]
+
+[[example]]
+name = "local_forward"
+required-features = ["client", "tunnel", "aws-lc-rs"]
+
+[[example]]
+name = "remote_forward"
+required-features = ["client", "tunnel", "aws-lc-rs"]
+
+[[example]]
+name = "server_password"
+required-features = ["server", "aws-lc-rs"]
+
+[[example]]
+name = "server_public_key"
+required-features = ["server", "aws-lc-rs"]
+
+[[example]]
+name = "server_exec"
+required-features = ["server", "aws-lc-rs"]
+
+[[example]]
+name = "server_streaming_exec"
+required-features = ["server", "aws-lc-rs"]
+
+[[example]]
+name = "tracing"
+required-features = ["client", "aws-lc-rs"]

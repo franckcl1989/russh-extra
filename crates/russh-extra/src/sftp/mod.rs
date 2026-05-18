@@ -11,6 +11,8 @@ mod client;
 mod packet;
 #[cfg(feature = "server")]
 pub(crate) mod server;
+
+const SFTP_CHUNK_SIZE: u32 = 32768;
 mod types;
 
 pub(crate) use client::SftpClientRuntime;
@@ -160,20 +162,22 @@ impl SftpClient {
     /// Handles chunked reading internally. Not suitable for files
     /// larger than available memory.
     pub async fn read_to_vec(&self, path: &str) -> Result<Vec<u8>> {
-        let mut file = self.open(path, SftpOpenMode::READ).await?;
+        let file = self.open(path, SftpOpenMode::READ).await?;
         let meta = file.metadata().await?;
         let size = meta.size().unwrap_or(0) as usize;
         let mut buf = Vec::with_capacity(size);
         let mut offset: u64 = 0;
         loop {
-            let chunk = file.read(offset, 32768).await?;
+            let chunk = file.read(offset, SFTP_CHUNK_SIZE).await?;
             if chunk.is_empty() {
                 break;
             }
             offset += chunk.len() as u64;
             buf.extend_from_slice(&chunk);
         }
-        let _ = file.close().await;
+        if let Err(e) = file.close().await {
+            tracing::warn!(error = %e, "failed to close SFTP file after read_to_vec");
+        }
         Ok(buf)
     }
 
@@ -189,7 +193,7 @@ impl SftpClient {
             )
             .await?;
         let mut offset: u64 = 0;
-        for chunk in data.chunks(32768) {
+        for chunk in data.chunks(SFTP_CHUNK_SIZE as usize) {
             file.write(offset, chunk).await?;
             offset += chunk.len() as u64;
         }

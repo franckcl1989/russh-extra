@@ -1400,7 +1400,7 @@ async fn sftp_open_read_close_file() {
         .unwrap();
 
     let sftp = session.sftp().await.unwrap();
-    let mut file = sftp
+    let file = sftp
         .open("/hello.txt", russh_extra::SftpOpenMode::READ)
         .await
         .unwrap();
@@ -1442,7 +1442,7 @@ async fn sftp_write_read_file() {
     file.write(0, b"written data").await.unwrap();
     file.close().await.unwrap();
 
-    let mut file = sftp
+    let file = sftp
         .open("/write-test.txt", russh_extra::SftpOpenMode::READ)
         .await
         .unwrap();
@@ -1773,7 +1773,7 @@ async fn sftp_read_at_buffer_boundary_32kib() {
         .unwrap();
 
     let sftp = session.sftp().await.unwrap();
-    let mut file = sftp
+    let file = sftp
         .open("/32k.bin", russh_extra::SftpOpenMode::READ)
         .await
         .unwrap();
@@ -1807,7 +1807,7 @@ async fn sftp_read_across_buffer_boundary_64kib() {
         .unwrap();
 
     let sftp = session.sftp().await.unwrap();
-    let mut file = sftp
+    let file = sftp
         .open("/64k.bin", russh_extra::SftpOpenMode::READ)
         .await
         .unwrap();

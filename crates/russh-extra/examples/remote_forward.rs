@@ -3,6 +3,12 @@
 //! Requests the SSH server to listen on a remote port and forward connections
 //! back to a local destination.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example remote_forward --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   SSH_HOST=example.com
 //!   SSH_PORT=22             (optional)

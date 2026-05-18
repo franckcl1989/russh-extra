@@ -42,6 +42,7 @@ pub(crate) const SSH_FILEXFER_ATTR_SIZE: u32 = 0x00000001;
 pub(crate) const SSH_FILEXFER_ATTR_UIDGID: u32 = 0x00000002;
 pub(crate) const SSH_FILEXFER_ATTR_PERMISSIONS: u32 = 0x00000004;
 pub(crate) const SSH_FILEXFER_ATTR_ACMODTIME: u32 = 0x00000008;
+pub(crate) const SSH_FILEXFER_ATTR_EXTENDED: u32 = 0x80000000;
 
 pub(crate) const SSH_FX_OK: u32 = 0;
 pub(crate) const SSH_FX_EOF: u32 = 1;
@@ -584,18 +585,18 @@ fn push_bytes(buf: &mut Vec<u8>, data: &[u8]) {
 
 fn push_attrs(buf: &mut Vec<u8>, attrs: &SftpFileAttrs) {
     push_u32(buf, attrs.flags);
-    if let Some(size) = attrs.size {
-        push_u64(buf, size);
+    if attrs.flags & SSH_FILEXFER_ATTR_SIZE != 0 {
+        push_u64(buf, attrs.size.unwrap_or(0));
     }
-    if let Some(uid) = attrs.uid {
-        push_u32(buf, uid);
+    if attrs.flags & SSH_FILEXFER_ATTR_UIDGID != 0 {
+        push_u32(buf, attrs.uid.unwrap_or(0));
         push_u32(buf, attrs.gid.unwrap_or(0));
     }
-    if let Some(permissions) = attrs.permissions {
-        push_u32(buf, permissions);
+    if attrs.flags & SSH_FILEXFER_ATTR_PERMISSIONS != 0 {
+        push_u32(buf, attrs.permissions.unwrap_or(0));
     }
-    if let Some(atime) = attrs.atime {
-        push_u32(buf, atime);
+    if attrs.flags & SSH_FILEXFER_ATTR_ACMODTIME != 0 {
+        push_u32(buf, attrs.atime.unwrap_or(0));
         push_u32(buf, attrs.mtime.unwrap_or(0));
     }
 }
@@ -654,6 +655,15 @@ fn pop_attrs(data: &[u8], pos: &mut usize) -> Result<SftpFileAttrs> {
     if flags & SSH_FILEXFER_ATTR_ACMODTIME != 0 {
         attrs.atime = Some(pop_u32(data, pos)?);
         attrs.mtime = Some(pop_u32(data, pos)?);
+    }
+    if flags & SSH_FILEXFER_ATTR_EXTENDED != 0 {
+        let extended_count = pop_u32(data, pos)?;
+        if extended_count > 0 {
+            return Err(Error::sftp(
+                SftpErrorKind::Protocol,
+                "extended file attributes are not supported",
+            ));
+        }
     }
     Ok(attrs)
 }

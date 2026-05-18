@@ -22,6 +22,14 @@ pub mod shell;
 pub mod tunnel;
 
 #[cfg(feature = "_russh")]
+/// Re-export of the underlying `russh` crate.
+///
+/// This is an escape hatch for advanced users who need low-level access to
+/// `russh` types such as `russh::Sig`, `russh::keys::ssh_key::PublicKey`, or
+/// `russh::keys::Certificate`.
+///
+/// The re-export is intentionally broad. Any `russh` version bump is a
+/// breaking change for downstream code that accesses types through this path.
 pub use russh;
 pub use russh_extra_core::{
     AuthenticationError, AuthenticationErrorKind, BoxError, CancelledError, CategoryError,

@@ -2,6 +2,12 @@
 //!
 //! Opens a remote shell, sends a command, reads the response, then closes.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example client_shell --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   SSH_HOST=example.com
 //!   SSH_PORT=22            (optional)

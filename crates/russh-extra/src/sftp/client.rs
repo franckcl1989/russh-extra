@@ -182,9 +182,10 @@ impl SftpClientRuntime {
     async fn expect_attrs(&self, packet: Vec<u8>, id: u32) -> Result<SftpMetadata> {
         match self.send_and_await(packet, id).await? {
             SftpResponse::Attrs(attrs) => Ok(SftpMetadata::from_packet(attrs)),
-            SftpResponse::Status(code, msg) => {
-                packet::check_status(code, &msg).map(|()| SftpMetadata::default())
-            }
+            SftpResponse::Status(code, msg) => Err({
+                let kind = packet::sftp_error_kind_for_code(code);
+                Error::sftp(kind, format!("expected attrs, got status {code}: {msg}"))
+            }),
             other => Err(Error::sftp(
                 SftpErrorKind::Protocol,
                 format!("expected attrs, got: {other:?}"),
@@ -199,9 +200,10 @@ impl SftpClientRuntime {
                 .next()
                 .map(|(filename, _, _)| filename)
                 .ok_or_else(|| Error::sftp(SftpErrorKind::Protocol, "empty name response")),
-            SftpResponse::Status(code, msg) => {
-                packet::check_status(code, &msg).map(|()| String::new())
-            }
+            SftpResponse::Status(code, msg) => Err({
+                let kind = packet::sftp_error_kind_for_code(code);
+                Error::sftp(kind, format!("expected name, got status {code}: {msg}"))
+            }),
             other => Err(Error::sftp(
                 SftpErrorKind::Protocol,
                 format!("expected name, got: {other:?}"),
@@ -447,32 +449,57 @@ async fn dispatch_response(
 }
 
 fn decode_status_response(packet: &[u8]) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
-    let (id, code, msg) = packet::decode_status(&packet[1..]).map_err(|e| (0, e))?;
-    Ok((id, SftpResponse::Status(code, msg)))
+    let id = fallback_pop_id(&packet[1..]);
+    match packet::decode_status(&packet[1..]) {
+        Ok((decoded_id, code, msg)) => Ok((decoded_id, SftpResponse::Status(code, msg))),
+        Err(e) => Err((id, e)),
+    }
 }
 
 fn decode_handle_response(packet: &[u8]) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
-    let (id, handle) = packet::decode_handle(&packet[1..]).map_err(|e| (0, e))?;
-    Ok((id, SftpResponse::Handle(handle)))
+    let id = fallback_pop_id(&packet[1..]);
+    match packet::decode_handle(&packet[1..]) {
+        Ok((decoded_id, handle)) => Ok((decoded_id, SftpResponse::Handle(handle))),
+        Err(e) => Err((id, e)),
+    }
 }
 
 fn decode_data_response(packet: &[u8]) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
-    let (id, data) = packet::decode_data(&packet[1..]).map_err(|e| (0, e))?;
-    Ok((id, SftpResponse::Data(data)))
+    let id = fallback_pop_id(&packet[1..]);
+    match packet::decode_data(&packet[1..]) {
+        Ok((decoded_id, data)) => Ok((decoded_id, SftpResponse::Data(data))),
+        Err(e) => Err((id, e)),
+    }
 }
 
 fn decode_name_response(packet: &[u8]) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
-    let (id, entries) = packet::decode_name(&packet[1..]).map_err(|e| (0, e))?;
-    let entries = entries
-        .into_iter()
-        .map(|e| (e.filename, e.longname, e.attrs))
-        .collect();
-    Ok((id, SftpResponse::Name(entries)))
+    let id = fallback_pop_id(&packet[1..]);
+    match packet::decode_name(&packet[1..]) {
+        Ok((decoded_id, entries)) => {
+            let entries = entries
+                .into_iter()
+                .map(|e| (e.filename, e.longname, e.attrs))
+                .collect();
+            Ok((decoded_id, SftpResponse::Name(entries)))
+        }
+        Err(e) => Err((id, e)),
+    }
 }
 
 fn decode_attrs_response(packet: &[u8]) -> std::result::Result<(u32, SftpResponse), (u32, Error)> {
-    let (id, attrs) = packet::decode_attrs(&packet[1..]).map_err(|e| (0, e))?;
-    Ok((id, SftpResponse::Attrs(attrs)))
+    let id = fallback_pop_id(&packet[1..]);
+    match packet::decode_attrs(&packet[1..]) {
+        Ok((decoded_id, attrs)) => Ok((decoded_id, SftpResponse::Attrs(attrs))),
+        Err(e) => Err((id, e)),
+    }
+}
+
+fn fallback_pop_id(data: &[u8]) -> u32 {
+    if data.len() >= 4 {
+        u32::from_be_bytes([data[0], data[1], data[2], data[3]])
+    } else {
+        0
+    }
 }
 
 #[allow(clippy::type_complexity)]

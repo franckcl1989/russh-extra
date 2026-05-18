@@ -1,9 +1,13 @@
 //! Known hosts: loading, trust-on-first-use, and saving.
 //!
-//! Demonstrates three common workflows:
+//! Demonstrates two common workflows:
 //!   1. Connect with a pre-existing known_hosts file (strict checking).
 //!   2. Connect with trust-on-first-use, then persist the new key.
-//!   3. Detect and report changed host keys.
+//!
+//! Usage:
+//! ```bash
+//! cargo run --example client_known_hosts --features client,known-hosts,aws-lc-rs
+//! ```
 //!
 //! Requires:
 //!   SSH_HOST=example.com

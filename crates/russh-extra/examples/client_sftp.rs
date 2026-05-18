@@ -3,6 +3,12 @@
 //! Demonstrates file read, directory listing, file upload, and metadata
 //! queries over the SSH subsystem.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example client_sftp --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   SSH_HOST=example.com
 //!   SSH_PORT=22            (optional)

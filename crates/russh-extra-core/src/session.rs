@@ -12,6 +12,7 @@ pub const DEFAULT_SSH_PORT: u16 = 22;
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Remote SSH endpoint.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Endpoint {
@@ -116,7 +117,7 @@ impl FromStr for Endpoint {
         }
 
         let Some((host, port)) = value.rsplit_once(':') else {
-            unreachable!("colon_count guarantees a separator")
+            return Err(Error::invalid_config("endpoint port separator missing"));
         };
 
         if host.is_empty() {
@@ -138,6 +139,7 @@ fn parse_port(value: &str) -> Result<u16> {
 }
 
 /// Opaque identifier assigned to high-level sessions.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct SessionId(u64);

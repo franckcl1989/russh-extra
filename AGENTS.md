@@ -1043,7 +1043,7 @@ Recommended `Cargo.toml` metadata:
 ```toml
 [package]
 name = "..."
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 description = "A high-level async SSH API built directly on top of russh"
@@ -1072,7 +1072,8 @@ auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
 0.1.4 hardening release published 2026-05-17 (284 tests, 0 failures).
 0.1.5 hardening release published 2026-05-18 (Windows CI dead-code fix).
 0.1.6 hardening release published 2026-05-18 (comprehensive audit + stability fixes).
-284 tests pass, 0 failures.
+0.1.7 hardening release published 2026-05-18 (53 fixes: SFTP protocol, serde, #[non_exhaustive], security).
+289 tests pass, 0 failures.
 
 Suggested roadmap:
 

@@ -1,13 +1,22 @@
 //! Raw SSH subsystem channel opening.
 //!
-//! Opens the `sftp` subsystem and performs the version negotiation handshake,
-//! then closes the channel.
+//! Opens the `sftp` subsystem channel and sends a raw byte payload,
+//! then closes the channel. This demonstrates the generic subsystem
+//! transport — no SFTP protocol handling is performed.
+//!
+//! Usage:
+//! ```bash
+//! cargo run --example client_subsystem --features client,shell,aws-lc-rs
+//! ```
 //!
 //! Requires:
 //!   SSH_HOST=example.com
 //!   SSH_PORT=22            (optional)
 //!   SSH_USER=deploy
 //!   SSH_PASSWORD=...
+//!
+//! Note: This example uses `accept_any_host_key()` for simplicity only.
+//! In production, use `pinned_sha256()` or a known_hosts file.
 
 use std::env;
 

@@ -1439,4 +1439,52 @@ mod tests {
             "should match second entry even when first entry has different key"
         );
     }
+
+    #[test]
+    fn merge_combines_entries_from_two_stores() {
+        let private_key1 =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let key1 = private_key1.public_key().clone();
+
+        let private_key2 =
+            russh::keys::PrivateKey::random(&mut rand::rng(), russh::keys::Algorithm::Ed25519)
+                .unwrap();
+        let key2 = private_key2.public_key().clone();
+
+        let store1 = KnownHosts::new();
+        store1
+            .add_entry("host-a.example.com", 0, &key1, "ssh-ed25519")
+            .unwrap();
+        assert_eq!(store1.entry_count(), 1);
+
+        let store2 = KnownHosts::new();
+        store2
+            .add_entry("host-b.example.com", 0, &key2, "ssh-ed25519")
+            .unwrap();
+        assert_eq!(store2.entry_count(), 1);
+
+        store1.merge(store2);
+        assert_eq!(
+            store1.entry_count(),
+            2,
+            "merge should combine entries from both stores"
+        );
+
+        assert_eq!(
+            store1.check("host-a.example.com", 22, &key1),
+            KnownHostStatus::Match,
+            "original entries should survive merge"
+        );
+        assert_eq!(
+            store1.check("host-b.example.com", 22, &key2),
+            KnownHostStatus::Match,
+            "merged entries should be queryable"
+        );
+        assert_eq!(
+            store1.warnings().len(),
+            0,
+            "merge should not produce warnings"
+        );
+    }
 }

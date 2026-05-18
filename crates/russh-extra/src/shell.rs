@@ -350,7 +350,7 @@ impl Shell {
             .ok_or_else(|| Error::unsupported("shell requires a connected session"))?;
         let handle_guard = handle.lock().await;
         let mut channel = time::timeout(
-            self.timeouts.channel_open,
+            self.timeouts.channel_open(),
             handle_guard.channel_open_session(),
         )
         .await
@@ -588,7 +588,7 @@ impl Subsystem {
             .ok_or_else(|| Error::unsupported("subsystem requires a connected session"))?;
         let handle_guard = handle.lock().await;
         let mut channel = time::timeout(
-            self.timeouts.channel_open,
+            self.timeouts.channel_open(),
             handle_guard.channel_open_session(),
         )
         .await

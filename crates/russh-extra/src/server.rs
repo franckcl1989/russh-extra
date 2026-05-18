@@ -1106,6 +1106,7 @@ pub enum KeyboardInteractiveResponse {
 /// The handler receives the submethods requested by the client,
 /// the auth session context, and (when present) the user's responses
 /// to the immediately preceding prompts.
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct KeyboardInteractiveContext {
     /// The authentication session context.
@@ -1410,6 +1411,7 @@ impl fmt::Debug for StreamingExecContext {
 }
 
 /// Context for shell requests.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct ShellContext {
     /// Session metadata.
@@ -1437,6 +1439,7 @@ pub struct PtyParams {
 }
 
 /// Context for PTY requests.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct PtyContext {
     /// Session metadata.
@@ -1446,6 +1449,7 @@ pub struct PtyContext {
 }
 
 /// Context for subsystem requests.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct SubsystemContext {
     /// Session metadata.
@@ -1457,6 +1461,7 @@ pub struct SubsystemContext {
 }
 
 /// An environment variable set request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct EnvRequest {
     /// Variable name.
@@ -1466,6 +1471,7 @@ pub struct EnvRequest {
 }
 
 /// Terminal window resize notification.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct WindowChange {
     /// New column count.
@@ -1479,6 +1485,7 @@ pub struct WindowChange {
 }
 
 /// Context for a TCP/IP forwarding global request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct TcpipForwardContext {
     /// Session identifier.
@@ -1494,6 +1501,7 @@ pub struct TcpipForwardContext {
 }
 
 /// Context for a streamlocal forwarding global request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct StreamLocalForwardContext {
     /// Session identifier.
@@ -1507,6 +1515,7 @@ pub struct StreamLocalForwardContext {
 }
 
 /// Context for a direct TCP/IP channel open request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct DirectTcpipContext {
     /// Session identifier.
@@ -1526,6 +1535,7 @@ pub struct DirectTcpipContext {
 }
 
 /// Context for a forwarded TCP/IP channel open request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct ForwardedTcpipContext {
     /// Session identifier.
@@ -1545,6 +1555,7 @@ pub struct ForwardedTcpipContext {
 }
 
 /// Context for a direct streamlocal (Unix domain socket) channel open request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct DirectStreamLocalContext {
     /// Session identifier.
@@ -1558,6 +1569,7 @@ pub struct DirectStreamLocalContext {
 }
 
 /// Context for an X11 forwarding channel request.
+#[non_exhaustive]
 #[derive(Clone)]
 pub struct X11RequestContext {
     /// Session identifier.
@@ -1594,6 +1606,7 @@ impl fmt::Debug for X11RequestContext {
 }
 
 /// Context for an X11 channel open request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct X11ChannelContext {
     /// Session identifier.
@@ -1609,6 +1622,7 @@ pub struct X11ChannelContext {
 }
 
 /// Context for an agent forwarding request.
+#[non_exhaustive]
 #[derive(Clone, Debug)]
 pub struct AgentRequestContext {
     /// Session identifier.
@@ -1939,8 +1953,8 @@ impl ServerRuntime {
     fn take_error(&self) -> Option<Error> {
         self.last_error
             .lock()
-            .ok()
-            .and_then(|mut last_error| last_error.take())
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
     }
 }
 

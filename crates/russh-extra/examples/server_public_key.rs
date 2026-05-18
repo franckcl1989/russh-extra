@@ -3,6 +3,12 @@
 //! Starts a server that accepts a single pre-authorized public key. All other
 //! authenticating users are rejected.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example server_public_key --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   LISTEN_ADDR=127.0.0.1:2222  (optional, defaults to 127.0.0.1:2222)
 //!   AUTHORIZED_KEY_PATH=~/.ssh/id_ed25519.pub  (path to authorized public key)

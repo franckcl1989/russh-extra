@@ -39,7 +39,7 @@ impl SftpFile {
     /// Reads up to `len` bytes starting at `offset`.
     ///
     /// Returns an empty `Vec<u8>` when the end of the file is reached.
-    pub async fn read(&mut self, offset: u64, len: u32) -> crate::Result<Vec<u8>> {
+    pub async fn read(&self, offset: u64, len: u32) -> crate::Result<Vec<u8>> {
         self.client.read(&self.handle, offset, len).await
     }
 
@@ -235,7 +235,7 @@ impl SftpDirEntry {
 
 /// File metadata returned by stat/lstat/fstat.
 #[non_exhaustive]
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct SftpMetadata {
     size: Option<u64>,
     uid: Option<u32>,
@@ -291,8 +291,8 @@ impl SftpMetadata {
         }
         if self.uid.is_some() || self.gid.is_some() {
             attrs.flags |= crate::sftp::packet::SSH_FILEXFER_ATTR_UIDGID;
-            attrs.uid = self.uid;
-            attrs.gid = self.gid;
+            attrs.uid = Some(self.uid.unwrap_or(0));
+            attrs.gid = Some(self.gid.unwrap_or(0));
         }
         if let Some(perm) = self.permissions {
             attrs.flags |= crate::sftp::packet::SSH_FILEXFER_ATTR_PERMISSIONS;
@@ -301,9 +301,10 @@ impl SftpMetadata {
         if let Some(atime) = self.accessed {
             attrs.flags |= crate::sftp::packet::SSH_FILEXFER_ATTR_ACMODTIME;
             attrs.atime = Some(atime as u32);
-        }
-        if let Some(mtime) = self.modified {
+            attrs.mtime = Some(self.modified.map(|v| v as u32).unwrap_or(0));
+        } else if let Some(mtime) = self.modified {
             attrs.flags |= crate::sftp::packet::SSH_FILEXFER_ATTR_ACMODTIME;
+            attrs.atime = Some(0);
             attrs.mtime = Some(mtime as u32);
         }
         attrs
@@ -397,7 +398,8 @@ impl fmt::Display for SftpMetadata {
 }
 
 /// Open mode flags for `SftpClient::open()`.
-#[derive(Clone, Copy, Debug, Default)]
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct SftpOpenMode(u32);
 
 impl SftpOpenMode {

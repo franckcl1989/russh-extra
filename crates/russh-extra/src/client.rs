@@ -257,7 +257,7 @@ impl Client {
         );
 
         let mut handle = time::timeout(
-            self.config.timeouts().connect,
+            self.config.timeouts().connect(),
             client::connect(Arc::new(russh_client_config(&self.config)), addrs, handler),
         )
         .await
@@ -909,7 +909,7 @@ impl Session {
         })?;
         let handle_guard = handle.lock().await;
         let mut channel = time::timeout(
-            self.timeouts.channel_open,
+            self.timeouts.channel_open(),
             handle_guard.channel_open_session(),
         )
         .await
@@ -1058,9 +1058,7 @@ impl Session {
         crate::tunnel::TunnelBuilder::from_session(
             self.id,
             self.handle.clone(),
-            #[cfg(feature = "tunnel")]
             self.remote_forwards.clone(),
-            #[cfg(feature = "tunnel")]
             self.remote_streamlocal_forwards.clone(),
             spec.into(),
             self.timeouts.clone(),
@@ -1193,7 +1191,7 @@ async fn authenticate_configured(
         match credential {
             Credential::Password(password) => {
                 let result = time::timeout(
-                    config.timeouts().auth,
+                    config.timeouts().auth(),
                     handle.authenticate_password(
                         username.clone(),
                         password.expose_secret().to_owned(),
@@ -1217,7 +1215,7 @@ async fn authenticate_configured(
             }
             Credential::None => {
                 let result = time::timeout(
-                    config.timeouts().auth,
+                    config.timeouts().auth(),
                     handle.authenticate_none(username.clone()),
                 )
                 .await
@@ -1259,7 +1257,7 @@ async fn authenticate_configured(
             }
             Credential::KeyboardInteractive(handler) => {
                 let result = time::timeout(
-                    config.timeouts().auth,
+                    config.timeouts().auth(),
                     run_keyboard_interactive(handle, &username, handler),
                 )
                 .await;
@@ -1310,7 +1308,7 @@ async fn authenticate_configured(
         }
 
         let result = time::timeout(
-            config.timeouts().auth,
+            config.timeouts().auth(),
             handle.authenticate_openssh_cert(
                 username.clone(),
                 Arc::new(key),
@@ -1473,7 +1471,7 @@ async fn authenticate_with_key(
         Some(HashAlg::Sha256),
     );
     time::timeout(
-        config.timeouts().auth,
+        config.timeouts().auth(),
         handle.authenticate_publickey(username.to_owned(), key_wrapped),
     )
     .await
@@ -1531,7 +1529,7 @@ async fn try_agent_auth(
         let public_key = identity.public_key().into_owned();
 
         let result = time::timeout(
-            config.timeouts().auth,
+            config.timeouts().auth(),
             handle.authenticate_publickey_with(
                 username.to_owned(),
                 public_key,
@@ -1823,6 +1821,8 @@ impl From<String> for RemoteCommand {
 }
 
 /// Captured command output.
+///
+/// When cloned, all captured output bytes are copied.
 #[non_exhaustive]
 #[derive(Clone, Eq, PartialEq)]
 pub struct CommandOutput {

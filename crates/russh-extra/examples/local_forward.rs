@@ -4,6 +4,12 @@
 //! to a remote destination. A simple TCP listener on the forwarded local port
 //! pairs with stdout reporting.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example local_forward --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   SSH_HOST=example.com
 //!   SSH_PORT=22             (optional)

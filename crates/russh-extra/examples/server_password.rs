@@ -3,6 +3,12 @@
 //! Starts a server that authenticates a single user and responds to a fixed
 //! set of commands. Runs until Ctrl-C.
 //!
+//! Usage:
+//! ```bash
+//! cargo run --example server_password --features <required-features>
+//! ```
+//!
+
 //! Requires:
 //!   LISTEN_ADDR=127.0.0.1:2222  (optional, defaults to 127.0.0.1:2222)
 

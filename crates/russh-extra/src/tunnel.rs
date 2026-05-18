@@ -423,7 +423,7 @@ async fn start_remote_forward(
     let allocated_port = {
         let guard = handle.lock().await;
         time::timeout(
-            timeouts.channel_open,
+            timeouts.channel_open(),
             guard.tcpip_forward(remote_host.as_str(), remote_port),
         )
         .await
@@ -673,7 +673,7 @@ async fn start_remote_streamlocal_forward(
     {
         let guard = handle.lock().await;
         time::timeout(
-            timeouts.channel_open,
+            timeouts.channel_open(),
             guard.streamlocal_forward(socket_path.as_str()),
         )
         .await
@@ -805,7 +805,7 @@ impl DirectTcpBuilder {
 
         let guard = handle.lock().await;
         let channel = time::timeout(
-            self.timeouts.channel_open,
+            self.timeouts.channel_open(),
             guard.channel_open_direct_tcpip(
                 self.target.host(),
                 self.target.port() as u32,
@@ -915,7 +915,7 @@ impl DirectStreamLocalBuilder {
 
         let guard = handle.lock().await;
         let channel = time::timeout(
-            self.timeouts.channel_open,
+            self.timeouts.channel_open(),
             guard.channel_open_direct_streamlocal(self.socket_path.to_string_lossy().as_ref()),
         )
         .await
@@ -1217,11 +1217,19 @@ pub(crate) async fn copy_bidirectional_with_addr(
     channel: russh::Channel<russh::client::Msg>,
     addr: &str,
 ) {
-    match TcpStream::connect(addr).await {
-        Ok(tcp) => {
+    match tokio::time::timeout(std::time::Duration::from_secs(30), TcpStream::connect(addr)).await {
+        Ok(Ok(tcp)) => {
             copy_bidirectional(channel, tcp).await;
         }
         Err(e) => {
+            tracing::warn!(
+                target = %addr,
+                error = %e,
+                "failed to connect to forwarding target",
+            );
+            let _ = channel.close().await;
+        }
+        Ok(Err(e)) => {
             tracing::warn!(
                 target = %addr,
                 error = %e,
@@ -1238,11 +1246,24 @@ pub(crate) async fn copy_bidirectional_with_unix_path(
     channel: russh::Channel<russh::client::Msg>,
     path: &Path,
 ) {
-    match UnixStream::connect(path).await {
-        Ok(unix) => {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        UnixStream::connect(path),
+    )
+    .await
+    {
+        Ok(Ok(unix)) => {
             copy_bidirectional_unix(channel, unix).await;
         }
         Err(e) => {
+            tracing::warn!(
+                target = %path.display(),
+                error = %e,
+                "failed to connect to streamlocal forwarding target",
+            );
+            let _ = channel.close().await;
+        }
+        Ok(Err(e)) => {
             tracing::warn!(
                 target = %path.display(),
                 error = %e,

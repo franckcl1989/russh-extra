@@ -433,7 +433,7 @@ async fn sftp_server_open_write_close_stat() {
     let meta = sftp.metadata("/test.txt").await.unwrap();
     assert_eq!(meta.size(), Some(10));
 
-    let mut file = sftp.open("/test.txt", SftpOpenMode::READ).await.unwrap();
+    let file = sftp.open("/test.txt", SftpOpenMode::READ).await.unwrap();
     let data = file.read(0, 4096).await.unwrap();
     assert_eq!(data, b"hello sftp");
     file.close().await.unwrap();
@@ -530,7 +530,7 @@ async fn sftp_server_read_returns_eof_for_empty_file() {
         .unwrap();
     file.close().await.unwrap();
 
-    let mut file = sftp.open("/empty.txt", SftpOpenMode::READ).await.unwrap();
+    let file = sftp.open("/empty.txt", SftpOpenMode::READ).await.unwrap();
     let data = file.read(0, 4096).await.unwrap();
     assert!(data.is_empty());
 

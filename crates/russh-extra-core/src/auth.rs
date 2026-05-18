@@ -7,6 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 /// Username used for SSH authentication.
+#[non_exhaustive]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct Username(String);
@@ -42,7 +43,12 @@ impl fmt::Display for Username {
 }
 
 /// Password value with redacted debug output.
-#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+///
+/// When the `serde` feature is enabled, this type does **not** implement
+/// `Serialize` or `Deserialize` to prevent accidental credential leakage.
+/// Use environment variables or secret managers instead of serializing
+/// passwords directly.
+#[non_exhaustive]
 #[derive(Clone, Eq, PartialEq)]
 pub struct Password(String);
 
@@ -82,8 +88,10 @@ impl From<String> for Password {
 #[derive(Clone, Eq, PartialEq)]
 pub enum Identity {
     /// Use an SSH agent.
+    #[cfg_attr(feature = "serde", serde(skip))]
     Agent,
     /// Use a private key from disk.
+    #[cfg_attr(feature = "serde", serde(skip))]
     KeyFile {
         /// Path to the private key.
         path: PathBuf,
@@ -91,6 +99,7 @@ pub enum Identity {
         passphrase: Option<Password>,
     },
     /// Use an in-memory private key.
+    #[cfg_attr(feature = "serde", serde(skip))]
     PrivateKey {
         /// PEM or OpenSSH private key bytes.
         data: Vec<u8>,
@@ -176,6 +185,7 @@ impl Identity {
 
 /// Information about a keyboard-interactive authentication prompt.
 #[non_exhaustive]
+#[derive(Clone)]
 pub struct ClientKeyboardInteractiveInfo {
     /// Human-readable name describing the authentication step.
     pub name: String,
@@ -259,8 +269,10 @@ pub type KeyboardInteractiveHandler = Arc<
 #[derive(Clone)]
 pub enum Credential {
     /// Password authentication.
+    #[cfg_attr(feature = "serde", serde(skip))]
     Password(Password),
     /// Public key authentication.
+    #[cfg_attr(feature = "serde", serde(skip))]
     Identity(Identity),
     /// Attempt `none` authentication.
     None,
