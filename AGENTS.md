@@ -1071,7 +1071,7 @@ auth banner, local/remote TCP and StreamLocal forwarding, and SFTP
 0.1.3 hardening release published 2026-05-17 (263 tests, 0 failures).
 0.1.4 hardening release published 2026-05-17 (284 tests, 0 failures).
 0.1.5 hardening release published 2026-05-18 (Windows CI dead-code fix).
-0.1.6 hardening release committed 2026-05-18 (comprehensive audit + stability fixes).
+0.1.6 hardening release published 2026-05-18 (comprehensive audit + stability fixes).
 284 tests pass, 0 failures.
 
 Suggested roadmap:
